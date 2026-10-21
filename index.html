@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Timón · Importar resumen</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<style>
+:root{
+  --fondo:#EBF0EA; --papel:#F7FAF6; --tinta:#1D2B25; --tinta-2:#53645C;
+  --renglon:#C8D5CB; --laton:#9A7428; --entra:#2C6A4C; --sale:#9E3434;
+  --aviso:#F3E7C6; --error:#F4D9D6; --ok:#D7E9DD;
+  --font:"Public Sans", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+}
+@media (prefers-color-scheme: dark){
+  :root{
+    --fondo:#121916; --papel:#1A231F; --tinta:#E2EAE4; --tinta-2:#9AAAA1;
+    --renglon:#2F3B35; --laton:#CFA75C; --entra:#6CC196; --sale:#E28A80;
+    --aviso:#3A331F; --error:#432523; --ok:#1F3A2B;
+  }
+}
+*{box-sizing:border-box}
+body{margin:0;background:var(--fondo);color:var(--tinta);font:15px/1.5 var(--font);font-variant-numeric:tabular-nums}
+header{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;padding:1.25rem 1.5rem;border-bottom:2px solid var(--tinta)}
+header h1{margin:0;font-size:1.5rem;font-weight:700;letter-spacing:-.01em}
+header span{color:var(--tinta-2);font-size:.875rem}
+main{max-width:1180px;margin:0 auto;padding:1.5rem}
+button,input,select{font:inherit;color:inherit}
+button{cursor:pointer;border:1.5px solid var(--tinta);background:var(--tinta);color:var(--papel);padding:.55rem 1.1rem;border-radius:3px;font-weight:600}
+button.sec{background:transparent;color:var(--tinta)}
+button:disabled{opacity:.4;cursor:not-allowed}
+:focus-visible{outline:3px solid var(--laton);outline-offset:2px}
+input[type=email],input[type=password],input[type=text],select{background:var(--papel);border:1px solid var(--renglon);border-radius:3px;padding:.5rem .6rem}
+label{display:block;font-size:.875rem;color:var(--tinta-2);margin:.75rem 0 .25rem}
+.oculto{display:none!important}
+.caja{background:var(--papel);border:1px solid var(--renglon);border-radius:4px;padding:1.5rem}
+#login{max-width:380px;margin:4rem auto}
+#login input{width:100%}
+#login button{margin-top:1.25rem;width:100%}
+#soltar{border:2px dashed var(--renglon);border-radius:4px;padding:2.5rem 1.5rem;text-align:center;background:var(--papel)}
+#soltar.encima{border-color:var(--laton)}
+#soltar p{margin:.25rem 0}
+#soltar .chico{color:var(--tinta-2);font-size:.875rem}
+.msg{margin:1rem 0;padding:.75rem 1rem;border-radius:3px}
+.msg.error{background:var(--error)} .msg.ok{background:var(--ok)} .msg.info{background:var(--aviso)}
+section.bloque{margin-top:2rem}
+.cabecera{display:flex;flex-wrap:wrap;align-items:center;gap:.75rem 1.25rem;margin-bottom:.75rem}
+.cabecera h2{margin:0;font-size:1.125rem}
+.cabecera .desc{color:var(--tinta-2);font-size:.875rem}
+/* La ecuación de conciliación: el elemento central de la página */
+.ecuacion{display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem .9rem;padding:.9rem 1.1rem;border-left:5px solid var(--sale);background:var(--papel);margin:.5rem 0 1rem;border-radius:0 4px 4px 0}
+.ecuacion.cierra{border-left-color:var(--entra)}
+.ecuacion .n{font-size:1.25rem;font-weight:600}
+.ecuacion .op{color:var(--tinta-2);font-size:1.25rem}
+.ecuacion .lbl{display:block;font-size:.75rem;color:var(--tinta-2)}
+.ecuacion .res{margin-left:auto;font-weight:600}
+.tabla{overflow-x:auto;border:1px solid var(--renglon);border-radius:4px;background:var(--papel)}
+table{border-collapse:collapse;width:100%;min-width:980px}
+th,td{padding:.45rem .6rem;border-bottom:1px solid var(--renglon);text-align:left;vertical-align:middle}
+th{font-size:.8rem;font-weight:600;color:var(--tinta-2);background:var(--fondo);position:sticky;top:0}
+td.monto{text-align:right;white-space:nowrap;font-weight:500}
+td.monto.mas{color:var(--entra)} td.monto.menos{color:var(--sale)}
+td.d{max-width:300px}
+td.d small{display:block;color:var(--tinta-2)}
+td select{max-width:190px;padding:.3rem .4rem}
+tr.sin td{background:var(--error)}
+tr.sug td{background:var(--aviso)}
+.estado{font-size:.75rem;color:var(--tinta-2);white-space:nowrap}
+.filtro{display:flex;align-items:center;gap:.5rem;font-size:.875rem;color:var(--tinta-2);margin:0 0 .5rem}
+#pie{position:sticky;bottom:0;background:var(--fondo);border-top:2px solid var(--tinta);margin-top:2rem;padding:1rem 0;display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between}
+#pie .resumen{font-size:.95rem}
+@media (max-width:640px){header{flex-direction:column;align-items:flex-start;gap:.25rem}main{padding:1rem}.ecuacion .res{margin-left:0;width:100%}}
+@media (prefers-reduced-motion:no-preference){.ecuacion{transition:border-color .3s}}
+</style>
+</head>
+<body>
+<header>
+  <h1>Timón</h1>
+  <span id="usuario"></span>
+</header>
+
+<main>
+  <!-- Ingreso -->
+  <div id="login" class="caja oculto">
+    <h2 style="margin-top:0">Ingresar</h2>
+    <form id="formLogin">
+      <label for="email">Email</label>
+      <input id="email" type="email" autocomplete="username" required>
+      <label for="pass">Contraseña</label>
+      <input id="pass" type="password" autocomplete="current-password" required>
+      <div id="bloqueMfa" class="oculto">
+        <label for="codigo">Código de tu app de autenticación</label>
+        <input id="codigo" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="6">
+      </div>
+      <button type="submit" id="btnLogin">Ingresar</button>
+    </form>
+    <div id="msgLogin"></div>
+  </div>
+
+  <!-- Importación -->
+  <div id="app" class="oculto">
+    <div id="soltar">
+      <p><strong>Arrastra acá el PDF de un resumen</strong></p>
+      <p class="chico">Santander (cuenta y Visa), Macro, BBVA o Mercado Pago</p>
+      <p style="margin-top:1rem"><button class="sec" id="btnElegir" type="button">Elegir archivo</button></p>
+      <input id="archivo" type="file" accept="application/pdf" class="oculto">
+    </div>
+    <div id="msg"></div>
+    <div id="bloques"></div>
+    <div id="pie" class="oculto">
+      <div class="resumen" id="resumenPie"></div>
+      <div style="display:flex;gap:.75rem">
+        <button class="sec" id="btnDescartar" type="button">Descartar</button>
+        <button id="btnGuardar" type="button">Guardar resumen</button>
+      </div>
+    </div>
+  </div>
+</main>
+
+<script type="module">
+  import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
+  import { leerResumen } from "./lectores.js";
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+  window.leerResumenLocal = (buf, password) => leerResumen(pdfjsLib, new Uint8Array(buf), { password });
+</script>
+<script>
+// ===== Configuración: completa con los datos de tu proyecto Supabase =====
+const SUPABASE_URL = "https://bnhpfxuldemtydpcyzhk.supabase.co";
+const SUPABASE_ANON_KEY = "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImJuaHBmeHVsZGVtdHlkcGN5emhrIiwicm9sZSI6ImFub24iLCJpYXQiOjE3OTI0NTQzODcsImV4cCI6MjEwODAzMDM4N30.y5QHi97F_xx8UXbalquN5XIF8D_fAbJeCdB2uskfvXA";
+// =========================================================================
+
+const sb = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+const $ = (id) => document.getElementById(id);
+const fmt = new Intl.NumberFormat("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+const esc = (s) => String(s ?? "").replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+
+let ref = null;        // datos de referencia
+let estado = null;     // { documento, hash, bloques: [{cuenta_id, descripcion, conciliacion, movs}] }
+let soloPendientes = false;
+
+// ---------- Ingreso ----------
+async function iniciar() {
+  const { data: { session } } = await sb.auth.getSession();
+  if (!session) return mostrarLogin();
+  const { data: aal } = await sb.auth.mfa.getAuthenticatorAssuranceLevel();
+  if (aal && aal.nextLevel === "aal2" && aal.currentLevel !== "aal2") {
+    mostrarLogin(); $("bloqueMfa").classList.remove("oculto"); return;
+  }
+  $("usuario").textContent = session.user.email;
+  $("login").classList.add("oculto");
+  $("app").classList.remove("oculto");
+  await cargarReferencias();
+}
+
+function mostrarLogin() { $("login").classList.remove("oculto"); $("app").classList.add("oculto"); }
+
+$("formLogin").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  $("msgLogin").innerHTML = "";
+  const mfaVisible = !$("bloqueMfa").classList.contains("oculto");
+  try {
+    if (!mfaVisible) {
+      const { error } = await sb.auth.signInWithPassword({ email: $("email").value, password: $("pass").value });
+      if (error) throw error;
+    } else {
+      const { data: f } = await sb.auth.mfa.listFactors();
+      const factor = f.totp[0];
+      const { error } = await sb.auth.mfa.challengeAndVerify({ factorId: factor.id, code: $("codigo").value.trim() });
+      if (error) throw error;
+    }
+    await iniciar();
+  } catch (err) {
+    $("msgLogin").innerHTML = `<div class="msg error">${esc(err.message)}</div>`;
+  }
+});
+
+// ---------- Referencias ----------
+async function cargarReferencias() {
+  const q = await Promise.all([
+    sb.from("cuentas").select("id, alias, persona_id, tipo, activa, numero, cbu_cvu, institucion_id").order("alias"),
+    sb.from("plasticos").select("id, cuenta_id, persona_id, ultimos4"),
+    sb.from("rubros").select("id, nombre, padre_id, tipo").order("id"),
+    sb.from("activos").select("id, nombre").order("nombre"),
+    sb.from("personas").select("id, nombre, tipo").order("id"),
+    sb.from("reglas").select("*").order("prioridad").order("id"),
+  ]);
+  const err = q.find((r) => r.error);
+  if (err) return mensaje("error", "No se pudieron cargar los datos: " + err.error.message);
+  const [cuentas, plasticos, rubros, activos, personas, reglas] = q.map((r) => r.data);
+  ref = { cuentas, plasticos, rubros, activos, personas,
+          reglas: reglas.map((r) => ({ ...r, re: patronARegex(r.patron) })) };
+}
+
+function patronARegex(p) {
+  const s = p.split("%").map((t) => t.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join(".*");
+  return new RegExp("^" + s + "$", "is");
+}
+
+// ---------- Archivo ----------
+$("btnElegir").onclick = () => $("archivo").click();
+$("archivo").onchange = (e) => e.target.files[0] && leerPdf(e.target.files[0]);
+const zona = $("soltar");
+zona.addEventListener("dragover", (e) => { e.preventDefault(); zona.classList.add("encima"); });
+zona.addEventListener("dragleave", () => zona.classList.remove("encima"));
+zona.addEventListener("drop", (e) => {
+  e.preventDefault(); zona.classList.remove("encima");
+  const f = e.dataTransfer.files[0];
+  if (f && f.type === "application/pdf") leerPdf(f); else mensaje("error", "El archivo tiene que ser un PDF.");
+});
+
+async function leerPdf(file) {
+  limpiar();
+  mensaje("info", `Leyendo ${esc(file.name)}…`);
+  try {
+    const buf = await file.arrayBuffer();
+    const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))]
+      .map((b) => b.toString(16).padStart(2, "0")).join("");
+    let data, clave;
+    for (;;) {
+      try { data = await window.leerResumenLocal(buf.slice(0), clave); break; }
+      catch (err) {
+        if (err?.name !== "PasswordException") throw err;
+        clave = prompt(clave ? "Clave incorrecta. Vuelve a ingresarla:" : "El PDF tiene clave (suele ser el DNI). Ingrésala:");
+        if (clave == null) throw new Error("Se canceló el ingreso de la clave.");
+      }
+    }
+    data.cuentas.forEach((c) => (c.cuenta_id = emparejarCuenta(c.identificador)));
+    prepararEstado(data, hash);
+    mensaje("", "");
+    dibujar();
+  } catch (err) {
+    mensaje("error", "No se pudo leer el resumen: " + esc(err.message));
+  }
+}
+
+// ---------- Cuenta del resumen ----------
+const soloDigitos = (s) => String(s ?? "").replace(/\D/g, "");
+function emparejarCuenta(id) {
+  if (!id) return null;
+  const porCbu = id.cbu && ref.cuentas.find((c) => soloDigitos(c.cbu_cvu) === soloDigitos(id.cbu));
+  if (porCbu) return porCbu.id;
+  const porNumero = id.numero && ref.cuentas.find((c) => c.numero && soloDigitos(c.numero) === soloDigitos(id.numero));
+  if (porNumero) return porNumero.id;
+  if (id.ultimos4?.length) {
+    const pl = ref.plasticos.find((p) => id.ultimos4.includes(p.ultimos4));
+    if (pl) return pl.cuenta_id;
+  }
+  return null;
+}
+
+// ---------- Clasificación ----------
+function prepararEstado(data, hash) {
+  estado = {
+    documento: data.documento, hash,
+    bloques: data.cuentas.map((c) => {
+      const usados = {};
+      return {
+        cuenta_id: c.cuenta_id, descripcion: c.descripcion, conciliacion: c.conciliacion,
+        movs: c.movimientos.map((m) => {
+          let id = m.comprobante && String(m.comprobante).length >= 4 ? String(m.comprobante)
+                 : `${m.fecha}|${m.monto}|${m.moneda}|${normalizar(m.descripcion).slice(0, 40)}`;
+          usados[id] = (usados[id] || 0) + 1;
+          if (usados[id] > 1) id += `#${usados[id]}`;
+          return clasificar({ ...m, id_externo: id, recordar: false });
+        }),
+      };
+    }),
+  };
+  estado.bloques.forEach(asignarPersonas);
+}
+
+function normalizar(s) { return String(s || "").toLowerCase().replace(/\s+/g, " ").trim(); }
+
+function clasificar(m) {
+  const regla = ref.reglas.find((r) => r.re.test(m.descripcion) &&
+    (r.monto_exacto == null || Math.abs(Number(r.monto_exacto)) === Math.abs(m.monto)));
+  m.rubro_id = regla?.rubro_id ?? null;
+  m.activo_id = regla?.activo_id ?? null;
+  m.beneficiario_id = regla?.beneficiario_id ?? null;
+  m.es_extraordinario = regla?.es_extraordinario ?? false;
+  m.confianza = !regla ? "confirmado" : regla.modo === "sugerir" ? "sugerido" : regla.confianza;
+  m.origenClasif = !regla ? "sin" : regla.modo === "sugerir" ? "sug" : "regla";
+  return m;
+}
+
+function asignarPersonas(b) {
+  const cuenta = ref.cuentas.find((c) => c.id === b.cuenta_id);
+  b.movs.forEach((m) => {
+    const pl = ref.plasticos.find((p) => p.cuenta_id === b.cuenta_id && m.ultimos4 && p.ultimos4 === m.ultimos4);
+    m.plastico_id = pl?.id ?? null;
+    m.persona_id = pl?.persona_id ?? cuenta?.persona_id ?? null;
+  });
+}
+
+function patronDesde(desc) {
+  const core = normalizar(desc)
+    .replace(/\(compra original.*?\)/, "")
+    .replace(/^(merpago|dlo|mercadopago)\s*[*\/]\s*/, "")
+    .replace(/[0-9]+/g, " ").replace(/[^a-záéíóúñü ]/g, " ")
+    .trim().split(/\s+/).filter((w) => w.length > 2).slice(0, 3);
+  return core.length ? `%${core.join("%")}%` : null;
+}
+
+// ---------- Dibujo ----------
+function opcionesRubro(sel) {
+  const grupos = ref.rubros.filter((r) => !r.padre_id);
+  return `<option value="">Elegir rubro</option>` + grupos.map((g) =>
+    `<optgroup label="${esc(g.nombre)}">` +
+    ref.rubros.filter((r) => r.padre_id === g.id).map((r) =>
+      `<option value="${r.id}" ${r.id === sel ? "selected" : ""}>${esc(r.nombre)}</option>`).join("") +
+    `</optgroup>`).join("");
+}
+const opciones = (lista, sel, vacio) => `<option value="">${vacio}</option>` +
+  lista.map((x) => `<option value="${x.id}" ${x.id === sel ? "selected" : ""}>${esc(x.alias ?? x.nombre)}</option>`).join("");
+
+function dibujar() {
+  $("bloques").innerHTML = estado.bloques.map((b, bi) => `
+    <section class="bloque" data-b="${bi}">
+      <div class="cabecera">
+        <h2>Cuenta</h2>
+        <select data-cuenta="${bi}" aria-label="Cuenta del resumen">${opciones(ref.cuentas.filter((c) => c.activa), b.cuenta_id, "Elegir cuenta")}</select>
+        <span class="desc">${esc(estado.documento.banco)}: ${esc(b.descripcion)}</span>
+      </div>
+      <div data-ecuaciones="${bi}"></div>
+      <label class="filtro"><input type="checkbox" data-filtro ${soloPendientes ? "checked" : ""}> Ver solo lo que falta clasificar o confirmar</label>
+      <div class="tabla"><table>
+        <thead><tr><th>Fecha</th><th>Descripción</th><th style="text-align:right">Monto</th><th>Rubro</th><th>Activo</th><th>Para</th><th>Extra.</th><th>Recordar</th><th>Estado</th></tr></thead>
+        <tbody>${b.movs.map((m, mi) => fila(b, bi, m, mi)).join("")}</tbody>
+      </table></div>
+    </section>`).join("");
+  actualizarEcuaciones();
+}
+
+function fila(b, bi, m, mi) {
+  const oculta = soloPendientes && m.origenClasif === "regla" && m.rubro_id;
+  const clase = !m.rubro_id ? "sin" : m.origenClasif === "sug" ? "sug" : "";
+  const beneficiarios = ref.personas.filter((p) => p.tipo !== "empresa");
+  const cuota = m.cuota_nro ? `<small>Cuota ${m.cuota_nro} de ${m.cuotas_total}</small>` : "";
+  const estadoTxt = !m.rubro_id ? "Sin clasificar" : m.origenClasif === "sug" ? "Sugerido: confirmar" :
+                    m.origenClasif === "regla" ? "Por regla" : "Manual";
+  return `<tr class="${clase} ${oculta ? "oculto" : ""}" data-b="${bi}" data-m="${mi}">
+    <td>${m.fecha.split("-").reverse().join("/")}</td>
+    <td class="d">${esc(m.descripcion)}${cuota}</td>
+    <td class="monto ${m.monto >= 0 ? "mas" : "menos"}">${m.moneda === "USD" ? "US$ " : "$ "}${fmt.format(m.monto)}</td>
+    <td><select data-f="rubro_id" aria-label="Rubro">${opcionesRubro(m.rubro_id)}</select></td>
+    <td><select data-f="activo_id" aria-label="Activo">${opciones(ref.activos, m.activo_id, "—")}</select></td>
+    <td><select data-f="beneficiario_id" aria-label="Para quién">${opciones(beneficiarios, m.beneficiario_id, "—")}</select></td>
+    <td><input type="checkbox" data-f="es_extraordinario" ${m.es_extraordinario ? "checked" : ""} aria-label="Extraordinario"></td>
+    <td><input type="checkbox" data-f="recordar" ${m.recordar ? "checked" : ""} aria-label="Recordar como regla"></td>
+    <td class="estado">${estadoTxt}</td>
+  </tr>`;
+}
+
+function actualizarEcuaciones() {
+  let todoCierra = true, pendientes = 0, sugeridos = 0, total = 0;
+  estado.bloques.forEach((b, bi) => {
+    const html = b.conciliacion.map((c) => {
+      const suma = b.movs.filter((m) => m.moneda === c.moneda).reduce((s, m) => s + Number(m.monto), 0);
+      const dif = Math.round((Number(c.saldo_inicial) + suma - Number(c.saldo_final)) * 100) / 100;
+      const cierra = Math.abs(dif) < 0.01;
+      if (!cierra) todoCierra = false;
+      const sim = c.moneda === "USD" ? "US$ " : "$ ";
+      return `<div class="ecuacion ${cierra ? "cierra" : ""}">
+        <div><span class="lbl">Saldo inicial ${c.fecha_inicial.split("-").reverse().join("/")}</span><span class="n">${sim}${fmt.format(c.saldo_inicial)}</span></div>
+        <span class="op">+</span>
+        <div><span class="lbl">Movimientos</span><span class="n">${sim}${fmt.format(suma)}</span></div>
+        <span class="op">=</span>
+        <div><span class="lbl">Saldo final ${c.fecha_final.split("-").reverse().join("/")}</span><span class="n">${sim}${fmt.format(c.saldo_final)}</span></div>
+        <span class="res">${cierra ? "Concilia" : `No concilia: diferencia ${sim}${fmt.format(dif)}`}</span>
+      </div>`;
+    }).join("");
+    document.querySelector(`[data-ecuaciones="${bi}"]`).innerHTML = html;
+    if (!b.cuenta_id) todoCierra = false;
+    b.movs.forEach((m) => { total++; if (!m.rubro_id) pendientes++; else if (m.origenClasif === "sug") sugeridos++; });
+  });
+  const listo = todoCierra && pendientes === 0;
+  $("btnGuardar").disabled = !listo;
+  $("pie").classList.remove("oculto");
+  $("resumenPie").innerHTML = `${total} movimientos, ${pendientes} sin clasificar, ${sugeridos} sugeridos` +
+    (estado.bloques.some((b) => !b.cuenta_id) ? ". Falta elegir la cuenta" : "") +
+    (!todoCierra && estado.bloques.every((b) => b.cuenta_id) ? ". Hay una cuenta que no concilia" : "");
+}
+
+// ---------- Edición ----------
+$("bloques").addEventListener("change", (e) => {
+  const t = e.target;
+  if (t.dataset.filtro !== undefined) { soloPendientes = t.checked; return dibujar(); }
+  if (t.dataset.cuenta !== undefined) {
+    const b = estado.bloques[+t.dataset.cuenta];
+    b.cuenta_id = t.value ? +t.value : null;
+    asignarPersonas(b);
+    return actualizarEcuaciones();
+  }
+  const tr = t.closest("tr"); if (!tr) return;
+  const m = estado.bloques[+tr.dataset.b].movs[+tr.dataset.m];
+  const f = t.dataset.f;
+  if (t.type === "checkbox") m[f] = t.checked;
+  else m[f] = t.value ? +t.value : null;
+  if (f === "rubro_id") {
+    m.origenClasif = m.rubro_id ? "manual" : "sin";
+    m.confianza = "confirmado";
+    tr.className = m.rubro_id ? "" : "sin";
+    tr.querySelector(".estado").textContent = m.rubro_id ? "Manual" : "Sin clasificar";
+  }
+  actualizarEcuaciones();
+});
+
+$("btnDescartar").onclick = limpiar;
+
+// ---------- Guardado ----------
+$("btnGuardar").onclick = async () => {
+  $("btnGuardar").disabled = true;
+  mensaje("info", "Guardando…");
+  const resultados = [];
+  try {
+    for (const b of estado.bloques) {
+      const reglas = b.movs.filter((m) => m.recordar && m.rubro_id).map((m) => ({
+        patron: patronDesde(m.descripcion), rubro_id: m.rubro_id, activo_id: m.activo_id,
+        beneficiario_id: m.beneficiario_id, es_extraordinario: m.es_extraordinario || null, modo: "auto",
+      })).filter((r) => r.patron);
+      const payload = {
+        cuenta_id: b.cuenta_id,
+        documento: {
+          tipo: estado.documento.tipo,
+          periodo_desde: estado.documento.periodo_desde,
+          periodo_hasta: estado.documento.periodo_hasta,
+          hash: `${estado.hash}-${b.cuenta_id}`,
+        },
+        conciliar: b.conciliacion,
+        movimientos: b.movs.map((m) => ({
+          fecha: m.fecha, descripcion_original: m.descripcion, monto: m.monto, moneda: m.moneda,
+          tipo_cambio: m.tipo_cambio, rubro_id: m.rubro_id, persona_id: m.persona_id,
+          beneficiario_id: m.beneficiario_id, activo_id: m.activo_id, plastico_id: m.plastico_id,
+          es_extraordinario: m.es_extraordinario, cuota_nro: m.cuota_nro, cuotas_total: m.cuotas_total,
+          comprobante: m.comprobante, id_externo: m.id_externo, confianza: m.confianza,
+          partes: m.partes ?? [], prestamo: m.prestamo ?? null,
+        })),
+        reglas_nuevas: reglas,
+      };
+      const { data, error } = await sb.rpc("guardar_importacion", { p: payload });
+      if (error) throw new Error(`${ref.cuentas.find((c) => c.id === b.cuenta_id)?.alias}: ${error.message}`);
+      resultados.push({ alias: ref.cuentas.find((c) => c.id === b.cuenta_id).alias, ...data });
+    }
+    await cargarReferencias();
+    const txt = resultados.map((r) =>
+      `${esc(r.alias)}: ${r.insertados} movimientos guardados` +
+      (r.duplicados ? `, ${r.duplicados} ya existían` : "") +
+      (r.emparejadas ? `, ${r.emparejadas} transferencias emparejadas` : "")).join("<br>");
+    estado = null;
+    $("bloques").innerHTML = ""; $("pie").classList.add("oculto");
+    mensaje("ok", "Resumen guardado.<br>" + txt);
+  } catch (err) {
+    mensaje("error", "No se guardó nada de esta cuenta. " + esc(err.message));
+    $("btnGuardar").disabled = false;
+  }
+};
+
+// ---------- Utilidades ----------
+function mensaje(tipo, html) { $("msg").innerHTML = html ? `<div class="msg ${tipo}">${html}</div>` : ""; }
+function limpiar() { estado = null; $("bloques").innerHTML = ""; $("pie").classList.add("oculto"); mensaje("", ""); $("archivo").value = ""; }
+
+iniciar();
+</script>
+</body>
+</html>
