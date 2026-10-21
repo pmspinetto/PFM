@@ -2,6 +2,11 @@
   "name": "family-office",
   "private": true,
   "type": "module",
-  "scripts": { "probar": "node herramientas/probar-lectores.mjs" },
-  "devDependencies": { "pdfjs-dist": "4.10.38" }
+  "scripts": {
+    "probar": "node herramientas/probar-lectores.mjs",
+    "probar-avisos": "node herramientas/probar-avisos.mjs"
+  },
+  "devDependencies": {
+    "pdfjs-dist": "4.10.38"
+  }
 }

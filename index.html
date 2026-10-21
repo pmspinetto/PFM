@@ -540,7 +540,8 @@ $("btnGuardar").onclick = async () => {
     const txt = resultados.map((r) =>
       `${esc(r.alias)}: ${r.insertados} movimientos guardados` +
       (r.duplicados ? `, ${r.duplicados} ya existían` : "") +
-      (r.emparejadas ? `, ${r.emparejadas} transferencias emparejadas` : "")).join("<br>");
+      (r.emparejadas ? `, ${r.emparejadas} transferencias emparejadas` : "") +
+      (r.absorbidos ? `, ${r.absorbidos} confirmaron avisos que habían llegado por mail` : "")).join("<br>");
     estado = null;
     $("bloques").innerHTML = ""; $("pie").classList.add("oculto");
     mensaje("ok", "Resumen guardado.<br>" + txt);
@@ -697,7 +698,7 @@ async function verHoy() {
         <div class="panel"><h3>Saldos por cuenta</h3><div class="tabla" style="border:0"><table class="mini">
           <tbody>${liq.map(filaSaldo).join("")}${tar.map(filaSaldo).join("")}</tbody></table></div></div>
         <div class="panel"><h3>Últimos movimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
-          ${(ult || []).map((m) => `<tr><td>${dm(m.fecha)}</td><td>${esc(m.descripcion_original).slice(0, 48)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${esc(rubroDe(m.rubro_id)?.nombre ?? "Sin clasificar")}</div></td>
+          ${(ult || []).map((m) => `<tr><td>${dm(m.fecha)}</td><td>${esc(m.descripcion_original).slice(0, 48)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${esc(rubroDe(m.rubro_id)?.nombre ?? "Sin clasificar")}${m.origen === "mail" ? " · por mail" : ""}</div></td>
             <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td></tr>`).join("")}
         </tbody></table></div></div>
       </div>`;
@@ -876,14 +877,15 @@ async function verPendientes() {
   try {
     const sinId = ref.rubros.find((r) => r.nombre === "Sin identificar")?.id;
     const internos = ref.rubros.filter((r) => ["Transferencia interna", "Pago de tarjeta", "Movimiento de efectivo"].includes(r.nombre)).map((r) => r.id);
-    const [revisar, transito, internasPend] = await Promise.all([
-      sb.from("movimientos").select("id, fecha, descripcion_original, monto, moneda, cuenta_id, rubro_id, confianza")
+    const [revisar, transito, internasPend, sinCuenta] = await Promise.all([
+      sb.from("movimientos").select("id, fecha, descripcion_original, monto, moneda, cuenta_id, rubro_id, confianza, origen")
         .or(`rubro_id.is.null,rubro_id.eq.${sinId},confianza.in.(sugerido,probable)`).order("fecha", { ascending: false }).limit(200),
       sb.from("v_transferencias_en_transito").select("*").order("fecha"),
       sb.from("movimientos").select("id, fecha, descripcion_original, monto, moneda, cuenta_id")
         .eq("estado_conciliacion", "pendiente").gt("monto", 0).in("rubro_id", internos).order("fecha"),
+      sb.from("avisos").select("id, recibido, banco, datos").eq("estado", "sin_cuenta").order("recibido", { ascending: false }),
     ]);
-    const err = [revisar, transito, internasPend].find((r) => r.error);
+    const err = [revisar, transito, internasPend, sinCuenta].find((r) => r.error);
     if (err) throw err.error;
 
     $("pend-c").innerHTML = `
@@ -894,12 +896,18 @@ async function verPendientes() {
       </div>
       <div class="panel"><h3>Para revisar</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
         ${revisar.data.map((m) => `<tr data-id="${m.id}"><td>${dm(m.fecha)}</td>
-          <td class="d">${esc(m.descripcion_original)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${m.rubro_id ? esc(rubroDe(m.rubro_id)?.nombre) + " (" + m.confianza + ")" : "Sin clasificar"}</div></td>
+          <td class="d">${esc(m.descripcion_original)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${m.rubro_id ? esc(rubroDe(m.rubro_id)?.nombre) + " (" + m.confianza + ")" : "Sin clasificar"}${m.origen === "mail" ? " · por mail, se confirma con el resumen" : ""}</div></td>
           <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td>
           <td><select aria-label="Rubro">${opcionesRubro(m.rubro_id)}</select></td>
           <td><button class="sec" data-confirmar type="button">Confirmar</button></td></tr>`).join("") ||
           `<tr><td class="tenue">No hay nada para revisar.</td></tr>`}
       </tbody></table></div></div>
+      ${sinCuenta.data.length ? `<div class="panel"><h3>Avisos por mail sin cuenta</h3>
+        <p class="tenue">No se reconoció la tarjeta o la cuenta. Se resuelve solo cuando importes un resumen de esa tarjeta y registres el plástico; mientras tanto puedes descartarlos.</p>
+        <table class="mini"><tbody>${sinCuenta.data.map((a) => `<tr data-aviso="${a.id}"><td>${dm(a.datos.fecha ?? a.recibido?.slice(0, 10))}</td>
+          <td>${esc(a.datos.descripcion)}<div class="tenue">${esc(a.banco)}${a.datos.ultimos4 ? `, tarjeta terminada en ${esc(a.datos.ultimos4)}` : ""}${a.datos.titular ? ` (${esc(a.datos.titular)})` : ""}</div></td>
+          <td class="num menos">${conMoneda(a.datos.monto, a.datos.moneda)}</td>
+          <td><button class="sec" data-descartar type="button">Descartar</button></td></tr>`).join("")}</tbody></table></div>` : ""}
       <div class="dos">
         <div class="panel"><h3>Salidas sin contraparte</h3><table class="mini"><tbody>
           ${transito.data.map((t) => `<tr><td>${dm(t.fecha)}</td><td>${esc(t.desde)}<div class="tenue">${esc(t.descripcion_original)}</div></td><td class="num menos">${pesos(t.monto)}</td></tr>`).join("") || `<tr><td class="tenue">Todo emparejado.</td></tr>`}
@@ -909,6 +917,12 @@ async function verPendientes() {
         </tbody></table></div>
       </div>`;
 
+    $("pend-c").querySelectorAll("[data-descartar]").forEach((b) => b.onclick = async () => {
+      const tr = b.closest("tr");
+      const { error } = await sb.from("avisos").update({ estado: "descartado" }).eq("id", +tr.dataset.aviso);
+      if (error) return alert(error.message);
+      tr.remove();
+    });
     $("pend-c").querySelectorAll("[data-confirmar]").forEach((b) => b.onclick = async () => {
       const tr = b.closest("tr"), rubro = tr.querySelector("select").value;
       if (!rubro) return alert("Elige un rubro primero.");
