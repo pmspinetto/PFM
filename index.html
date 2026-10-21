@@ -51,6 +51,9 @@ section.bloque{margin-top:2rem}
 .cabecera{display:flex;flex-wrap:wrap;align-items:center;gap:.75rem 1.25rem;margin-bottom:.75rem}
 .cabecera h2{margin:0;font-size:1.125rem}
 .cabecera .desc{color:var(--tinta-2);font-size:.875rem}
+.plasticos{background:var(--aviso);border-radius:4px;padding:.6rem .9rem;margin-bottom:.75rem;display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;align-items:center}
+.plasticos p{margin:0;width:100%;font-size:.875rem}
+.plasticos label{margin:0;display:flex;gap:.5rem;align-items:center}
 /* La ecuación de conciliación: el elemento central de la página */
 .ecuacion{display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem .9rem;padding:.9rem 1.1rem;border-left:5px solid var(--sale);background:var(--papel);margin:.5rem 0 1rem;border-radius:0 4px 4px 0}
 .ecuacion.cierra{border-left-color:var(--entra)}
@@ -300,7 +303,8 @@ function prepararEstado(data, hash) {
     bloques: data.cuentas.map((c) => {
       const usados = {};
       return {
-        cuenta_id: c.cuenta_id, identificador: c.identificador, descripcion: c.descripcion, conciliacion: c.conciliacion,
+        cuenta_id: c.cuenta_id, identificador: c.identificador, titulares: c.titulares ?? {},
+        descripcion: c.descripcion, conciliacion: c.conciliacion,
         movs: c.movimientos.map((m) => {
           let id = m.comprobante && String(m.comprobante).length >= 4 ? String(m.comprobante)
                  : `${m.fecha}|${m.monto}|${m.moneda}|${normalizar(m.descripcion).slice(0, 40)}`;
@@ -330,11 +334,43 @@ function clasificar(m) {
 
 function asignarPersonas(b) {
   const cuenta = ref.cuentas.find((c) => c.id === b.cuenta_id);
+  // Plásticos que aparecen en el resumen y todavía no están registrados en esta cuenta
+  const conocidos = ref.plasticos.filter((p) => p.cuenta_id === b.cuenta_id).map((p) => p.ultimos4);
+  const anteriores = b.plasticosNuevos ?? [];
+  b.plasticosNuevos = !b.cuenta_id ? [] : [...new Set(b.movs.map((m) => m.ultimos4).filter(Boolean))]
+    .filter((u) => !conocidos.includes(u))
+    .map((u) => anteriores.find((n) => n.ultimos4 === u) ??
+                { ultimos4: u, titular: b.titulares[u] ?? null, persona_id: personaPorNombre(b.titulares[u]) });
   b.movs.forEach((m) => {
     const pl = ref.plasticos.find((p) => p.cuenta_id === b.cuenta_id && m.ultimos4 && p.ultimos4 === m.ultimos4);
+    const nuevo = b.plasticosNuevos.find((n) => n.ultimos4 === m.ultimos4);
     m.plastico_id = pl?.id ?? null;
-    m.persona_id = pl?.persona_id ?? cuenta?.persona_id ?? null;
+    m.persona_id = pl?.persona_id ?? nuevo?.persona_id ?? cuenta?.persona_id ?? null;
   });
+}
+
+// "NOMBRE A APELLIDO" → la persona cuyo nombre aparece al comienzo de alguna palabra
+function personaPorNombre(titular) {
+  if (!titular) return null;
+  const palabras = normalizar(titular).normalize("NFD").replace(/[\u0300-\u036f]/g, "").split(" ");
+  const p = ref.personas.filter((x) => x.tipo !== "empresa" && x.tipo !== "grupo")
+    .find((x) => palabras.some((w) => w.startsWith(normalizar(x.nombre).normalize("NFD").replace(/[\u0300-\u036f]/g, ""))));
+  return p?.id ?? null;
+}
+
+// Registra los plásticos nuevos (completa uno existente sin número o crea uno) antes de guardar
+async function registrarPlasticos(b) {
+  const cuenta = ref.cuentas.find((c) => c.id === b.cuenta_id);
+  for (const n of b.plasticosNuevos) {
+    const libre = ref.plasticos.find((p) => p.cuenta_id === b.cuenta_id && p.persona_id === n.persona_id && !p.ultimos4);
+    const { data, error } = libre
+      ? await sb.from("plasticos").update({ ultimos4: n.ultimos4 }).eq("id", libre.id).select().single()
+      : await sb.from("plasticos").insert({ cuenta_id: b.cuenta_id, persona_id: n.persona_id, ultimos4: n.ultimos4,
+                                            es_adicional: n.persona_id !== cuenta?.persona_id }).select().single();
+    if (error) throw new Error(`No se pudo registrar el plástico ${n.ultimos4}: ${error.message}`);
+    if (libre) Object.assign(libre, data); else ref.plasticos.push(data);
+  }
+  asignarPersonas(b);
 }
 
 function patronDesde(desc) {
@@ -366,6 +402,9 @@ function dibujar() {
         <select data-cuenta="${bi}" aria-label="Cuenta del resumen">${opciones(ref.cuentas.filter((c) => c.activa), b.cuenta_id, "Elegir cuenta")}</select>
         <span class="desc">${esc(estado.documento.banco)}: ${esc(b.descripcion)}</span>
       </div>
+      ${b.plasticosNuevos.length ? `<div class="plasticos"><p class="chico">Plásticos nuevos en esta tarjeta: indica de quién es cada uno (se recuerda para los próximos resúmenes).</p>
+        ${b.plasticosNuevos.map((n, ni) => `<label>Terminado en ${esc(n.ultimos4)}${n.titular ? ` <span class="tenue">(${esc(n.titular)})</span>` : ""}
+          <select data-plastico="${bi}:${ni}">${opciones(ref.personas.filter((x) => x.tipo !== "empresa" && x.tipo !== "grupo"), n.persona_id, "¿De quién es?")}</select></label>`).join("")}</div>` : ""}
       <div data-ecuaciones="${bi}"></div>
       <label class="filtro"><input type="checkbox" data-filtro ${soloPendientes ? "checked" : ""}> Ver solo lo que falta clasificar o confirmar</label>
       <div class="tabla"><table>
@@ -397,7 +436,7 @@ function fila(b, bi, m, mi) {
 }
 
 function actualizarEcuaciones() {
-  let todoCierra = true, pendientes = 0, sugeridos = 0, total = 0;
+  let todoCierra = true, pendientes = 0, sugeridos = 0, total = 0, faltaPlastico = false;
   estado.bloques.forEach((b, bi) => {
     const html = b.conciliacion.map((c) => {
       const suma = b.movs.filter((m) => m.moneda === c.moneda).reduce((s, m) => s + Number(m.monto), 0);
@@ -416,13 +455,15 @@ function actualizarEcuaciones() {
     }).join("");
     document.querySelector(`[data-ecuaciones="${bi}"]`).innerHTML = html;
     if (!b.cuenta_id) todoCierra = false;
+    if (b.plasticosNuevos.some((n) => !n.persona_id)) faltaPlastico = true;
     b.movs.forEach((m) => { total++; if (!m.rubro_id) pendientes++; else if (m.origenClasif === "sug") sugeridos++; });
   });
-  const listo = todoCierra && pendientes === 0;
+  const listo = todoCierra && pendientes === 0 && !faltaPlastico;
   $("btnGuardar").disabled = !listo;
   $("pie").classList.remove("oculto");
   $("resumenPie").innerHTML = `${total} movimientos, ${pendientes} sin clasificar, ${sugeridos} sugeridos` +
     (estado.bloques.some((b) => !b.cuenta_id) ? ". Falta elegir la cuenta" : "") +
+    (faltaPlastico ? ". Falta indicar de quién es un plástico" : "") +
     (!todoCierra && estado.bloques.every((b) => b.cuenta_id) ? ". Hay una cuenta que no concilia" : "");
 }
 
@@ -434,6 +475,12 @@ $("bloques").addEventListener("change", (e) => {
     const b = estado.bloques[+t.dataset.cuenta];
     b.cuenta_id = t.value ? +t.value : null;
     asignarPersonas(b);
+    return dibujar();
+  }
+  if (t.dataset.plastico !== undefined) {
+    const [bi, ni] = t.dataset.plastico.split(":").map(Number);
+    estado.bloques[bi].plasticosNuevos[ni].persona_id = t.value ? +t.value : null;
+    asignarPersonas(estado.bloques[bi]);
     return actualizarEcuaciones();
   }
   const tr = t.closest("tr"); if (!tr) return;
@@ -459,6 +506,7 @@ $("btnGuardar").onclick = async () => {
   const resultados = [];
   try {
     for (const b of estado.bloques) {
+      await registrarPlasticos(b);
       const reglas = b.movs.filter((m) => m.recordar && m.rubro_id).map((m) => ({
         patron: patronDesde(m.descripcion), rubro_id: m.rubro_id, activo_id: m.activo_id,
         beneficiario_id: m.beneficiario_id, es_extraordinario: m.es_extraordinario || null, modo: "auto",

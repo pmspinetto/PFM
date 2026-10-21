@@ -6,7 +6,7 @@
 // { documento:{tipo,banco,formato,periodo_desde,periodo_hasta,
 //              tarjeta?:{cierre,vencimiento,proximo_cierre,proximo_vencimiento,
 //                        pago_minimo,cuotas_proximo_resumen}},
-//   cuentas:[{ identificador:{cbu,numero,ultimos4[]}, descripcion,
+//   cuentas:[{ identificador:{cbu,numero,ultimos4[]}, descripcion, titulares?:{ultimos4: nombre},
 //              conciliacion:[{moneda,fecha_inicial,saldo_inicial,fecha_final,saldo_final}],
 //              movimientos:[{fecha,descripcion,monto,moneda,tipo_cambio,comprobante,
 //                            cuota_nro,cuotas_total,ultimos4}] }] }
@@ -492,7 +492,7 @@ function macroTarjeta(paginas) {
   const iCuotas = lineas.findIndex((l) => /^Cuotas a vencer/i.test(texto(l)));
   const cuotaProx = iCuotas >= 0 ? (texto(lineas[iCuotas + 2]).match(/\$\s?(\d[\d.]*,\d{2})/) || [])[1] : null;
 
-  const movs = [], ini = { ARS: 0, USD: 0 };
+  const movs = [], ini = { ARS: 0, USD: 0 }, titulares = {};
   let detalle = false, pendientes = [];
   for (const l of lineas) {
     const t = texto(l);
@@ -504,8 +504,11 @@ function macroTarjeta(paginas) {
       for (const i of montos) ini[i.x < 490 ? "ARS" : "USD"] = -montoLibre(i.s);
       continue;
     }
-    const tot = t.match(/^Tarjeta (\d{4}) Total/i);
-    if (tot) { pendientes.forEach((m) => (m.ultimos4 = tot[1])); pendientes = []; continue; }
+    const tot = t.match(/^Tarjeta (\d{4}) Total Consumos de (.+?)(?:\s+[\d.,]+-?)*\s*_?$/i);
+    if (tot) {
+      titulares[tot[1]] = tot[2].trim();
+      pendientes.forEach((m) => (m.ultimos4 = tot[1])); pendientes = []; continue;
+    }
     const primero = l.items[0];
     if (!/^\d{2}\.\d{2}\.\d{2}$/.test(primero.s) || !montos.length) continue;
     const comp = l.items.find((i) => i.x >= 100 && i.x < 165);
@@ -530,7 +533,7 @@ function macroTarjeta(paginas) {
                  tarjeta: { cierre, vencimiento, proximo_cierre: proximoCierre, proximo_vencimiento: proximoVto,
                             pago_minimo: pagoMinimo, cuotas_proximo_resumen: cuotaProx ? monto(cuotaProx).v : null } },
     cuentas: [{ identificador: { cbu: null, numero, ultimos4: [...new Set(movs.map((m) => m.ultimos4).filter(Boolean))] },
-                descripcion: `${marca} ${numero ?? ""}`.trim(), conciliacion, movimientos: movs }],
+                descripcion: `${marca} ${numero ?? ""}`.trim(), titulares, conciliacion, movimientos: movs }],
   };
 }
 
