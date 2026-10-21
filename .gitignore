@@ -1,0 +1,7 @@
+# Nunca subir datos personales: el repositorio es público
+privado/
+node_modules/
+.DS_Store
+*.pdf
+.env*
+CLAUDE.md

@@ -1,0 +1,7 @@
+{
+  "name": "timon-pfm",
+  "private": true,
+  "type": "module",
+  "scripts": { "probar": "node herramientas/probar-lectores.mjs" },
+  "devDependencies": { "pdfjs-dist": "4.10.38" }
+}

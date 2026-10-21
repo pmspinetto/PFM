@@ -3,11 +3,12 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Timón · Importar resumen</title>
+<title>Timón</title>
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
 <style>
 :root{
   --fondo:#EBF0EA; --papel:#F7FAF6; --tinta:#1D2B25; --tinta-2:#53645C;
@@ -74,11 +75,40 @@ tr.sug td{background:var(--aviso)}
 #pie .resumen{font-size:.95rem}
 @media (max-width:640px){header{flex-direction:column;align-items:flex-start;gap:.25rem}main{padding:1rem}.ecuacion .res{margin-left:0;width:100%}}
 @media (prefers-reduced-motion:no-preference){.ecuacion{transition:border-color .3s}}
+
+/* ---- Navegación y tableros ---- */
+nav#menu{display:flex;gap:.25rem;flex-wrap:wrap}
+nav#menu a{color:var(--tinta-2);text-decoration:none;padding:.35rem .7rem;border-radius:3px;font-weight:500;font-size:.95rem}
+nav#menu a.activo{color:var(--tinta);background:var(--papel);box-shadow:inset 0 -3px 0 var(--laton)}
+.vista>h2{font-size:1.35rem;margin:.25rem 0 1rem}
+.cifras{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1rem;margin-bottom:1.5rem}
+.cifra{background:var(--papel);border:1px solid var(--renglon);border-radius:4px;padding:1rem 1.1rem}
+.cifra .lbl{font-size:.85rem;color:var(--tinta-2)}
+.cifra .val{font-size:1.5rem;font-weight:700;margin-top:.15rem}
+.cifra .sub{font-size:.8rem;color:var(--tinta-2);margin-top:.2rem}
+.cifra.total{border-left:5px solid var(--laton)}
+.dos{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem}
+@media (max-width:860px){.dos{grid-template-columns:1fr}}
+.panel{background:var(--papel);border:1px solid var(--renglon);border-radius:4px;padding:1rem 1.1rem;margin-bottom:1.5rem}
+.panel h3{margin:0 0 .75rem;font-size:1rem}
+.panel table{min-width:0}
+.mini td,.mini th{padding:.35rem .5rem;font-size:.9rem}
+.num{text-align:right;white-space:nowrap}
+.mas{color:var(--entra)} .menos{color:var(--sale)}
+.tenue{color:var(--tinta-2);font-size:.85rem}
+.barra-filtros{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;margin-bottom:1rem}
+.lienzo{position:relative;height:320px}
+td.d{min-width:260px;max-width:380px}
 </style>
 </head>
 <body>
 <header>
   <h1>Timón</h1>
+  <nav id="menu" class="oculto" aria-label="Secciones">
+    <a href="#hoy">Hoy</a><a href="#mes">El mes</a><a href="#viene">Lo que viene</a>
+    <a href="#patrimonio">Patrimonio</a><a href="#pendientes">Pendientes</a>
+    <a href="#importar">Importar</a><a href="#rubros">Rubros</a>
+  </nav>
   <span id="usuario"></span>
 </header>
 
@@ -100,8 +130,17 @@ tr.sug td{background:var(--aviso)}
     <div id="msgLogin"></div>
   </div>
 
-  <!-- Importación -->
   <div id="app" class="oculto">
+  <section class="vista" id="v-hoy"><h2>Hoy</h2><div id="hoy-c"></div></section>
+  <section class="vista oculto" id="v-mes"><h2>El mes</h2>
+    <div class="barra-filtros"><label for="mesSel" style="margin:0">Mes</label><input type="month" id="mesSel"></div>
+    <div id="mes-c"></div></section>
+  <section class="vista oculto" id="v-viene"><h2>Lo que viene</h2><div id="viene-c"></div></section>
+  <section class="vista oculto" id="v-patrimonio"><h2>Patrimonio</h2><div id="pat-c"></div></section>
+  <section class="vista oculto" id="v-pendientes"><h2>Pendientes</h2><div id="pend-c"></div></section>
+  <section class="vista oculto" id="v-rubros"><h2>Rubros</h2><div id="rub-c"></div></section>
+  <!-- Importación -->
+  <section class="vista oculto" id="v-importar"><h2>Importar resumen</h2>
     <div id="soltar">
       <p><strong>Arrastra acá el PDF de un resumen</strong></p>
       <p class="chico">Santander (cuenta y Visa), Macro, BBVA o Mercado Pago</p>
@@ -117,6 +156,7 @@ tr.sug td{background:var(--aviso)}
         <button id="btnGuardar" type="button">Guardar resumen</button>
       </div>
     </div>
+  </section>
   </div>
 </main>
 
@@ -152,7 +192,9 @@ async function iniciar() {
   $("usuario").textContent = session.user.email;
   $("login").classList.add("oculto");
   $("app").classList.remove("oculto");
+  $("menu").classList.remove("oculto");
   await cargarReferencias();
+  await iniciarTableros();
 }
 
 function mostrarLogin() { $("login").classList.remove("oculto"); $("app").classList.add("oculto"); }
@@ -461,6 +503,364 @@ $("btnGuardar").onclick = async () => {
 // ---------- Utilidades ----------
 function mensaje(tipo, html) { $("msg").innerHTML = html ? `<div class="msg ${tipo}">${html}</div>` : ""; }
 function limpiar() { estado = null; $("bloques").innerHTML = ""; $("pie").classList.add("oculto"); mensaje("", ""); $("archivo").value = ""; }
+
+// =====================================================================
+// TABLEROS
+// =====================================================================
+const fmt0 = new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 });
+const pesos = (n) => "$ " + fmt0.format(Math.round(n || 0));
+const dolares = (n) => "US$ " + fmt0.format(Math.round(n || 0));
+const conMoneda = (n, mon) => (mon === "USD" ? dolares(n) : pesos(n));
+const dm = (f) => f ? f.slice(8, 10) + "/" + f.slice(5, 7) : "";
+const hoyISO = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
+const sumarDias = (f, d) => { const x = new Date(f + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + d); return x.toISOString().slice(0, 10); };
+const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const rubroDe = (id) => ref.rubros.find((r) => r.id === id);
+const grupoDe = (id) => { const r = rubroDe(id); if (!r) return null; return r.padre_id ? rubroDe(r.padre_id) : r; };
+const cuentaDe = (id) => ref.cuentas.find((c) => c.id === id);
+const nombrePersona = (id) => ref.personas.find((p) => p.id === id)?.nombre ?? "Sin asignar";
+const graficos = {};
+let tc = null;
+
+const VISTAS = { hoy: verHoy, mes: verMes, viene: verViene, patrimonio: verPatrimonio, pendientes: verPendientes, importar: null, rubros: verRubros };
+
+let tablerosListos = false;
+async function iniciarTableros() {
+  if (tablerosListos) return irAVista();
+  tablerosListos = true;
+  window.addEventListener("hashchange", irAVista);
+  $("mesSel").value = hoyISO().slice(0, 7);
+  $("mesSel").addEventListener("change", verMes);
+  // En vivo: cada cambio en movimientos refresca la vista abierta
+  let espera = null;
+  sb.channel("cambios")
+    .on("postgres_changes", { event: "*", schema: "public", table: "movimientos" }, () => {
+      clearTimeout(espera);
+      espera = setTimeout(() => { const v = vistaActual(); if (VISTAS[v]) VISTAS[v](); }, 800);
+    })
+    .subscribe();
+  await irAVista();
+}
+
+function vistaActual() { const v = location.hash.slice(1); return v in VISTAS ? v : "hoy"; }
+
+async function irAVista() {
+  const v = vistaActual();
+  document.querySelectorAll(".vista").forEach((s) => s.classList.toggle("oculto", s.id !== "v-" + v));
+  document.querySelectorAll("#menu a").forEach((a) => a.classList.toggle("activo", a.getAttribute("href") === "#" + v));
+  if (VISTAS[v]) await VISTAS[v]();
+}
+
+async function tipoCambio() {
+  const { data } = await sb.from("tipos_cambio").select("*").order("fecha", { ascending: false }).limit(30);
+  const mep = (data || []).find((t) => t.tipo === "mep") || (data || [])[0];
+  tc = mep ? { valor: Number(mep.venta), fecha: mep.fecha, tipo: mep.tipo } : null;
+  return tc;
+}
+
+async function saldos() {
+  const { data, error } = await sb.from("v_saldo_vivo").select("*");
+  if (error) throw error;
+  return data.map((s) => ({ ...s, cuenta: ref.cuentas.find((c) => c.alias === s.alias) }));
+}
+
+function cifra(lbl, val, sub = "", clase = "") {
+  return `<div class="cifra ${clase}"><div class="lbl">${lbl}</div><div class="val">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+}
+
+function grafico(id, config) {
+  if (graficos[id]) graficos[id].destroy();
+  graficos[id] = new Chart(document.getElementById(id), config);
+}
+
+// ---------------- HOY ----------------
+async function verHoy() {
+  try {
+    const [ss, t] = await Promise.all([saldos(), tipoCambio()]);
+    const liq = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito");
+    const tar = ss.filter((s) => s.cuenta?.tipo === "tarjeta_credito");
+    const tot = (lista, mon) => lista.filter((s) => s.moneda === mon).reduce((a, s) => a + Number(s.saldo_estimado), 0);
+    const dispARS = tot(liq, "ARS"), dispUSD = tot(liq, "USD"), deuARS = tot(tar, "ARS"), deuUSD = tot(tar, "USD");
+    const netoUSD = t ? (dispARS + deuARS) / t.valor + dispUSD + deuUSD : null;
+
+    const { data: ult } = await sb.from("movimientos")
+      .select("fecha, descripcion_original, monto, moneda, cuenta_id, rubro_id, origen")
+      .order("fecha", { ascending: false }).order("id", { ascending: false }).limit(12);
+
+    const filaSaldo = (s) => {
+      const estado = Number(s.cant_movimientos) > 0
+        ? `Estimado: confirmado al ${dm(s.confirmado_al)} + ${s.cant_movimientos} mov.`
+        : `Confirmado al ${dm(s.confirmado_al)}`;
+      return `<tr><td>${esc(s.alias)}</td><td class="num ${s.saldo_estimado < 0 ? "menos" : ""}">${conMoneda(s.saldo_estimado, s.moneda)}</td><td class="tenue">${estado}</td></tr>`;
+    };
+
+    $("hoy-c").innerHTML = `
+      <div class="cifras">
+        ${cifra("Disponible en pesos", pesos(dispARS), "Cuentas, billeteras y efectivo", "total")}
+        ${cifra("Disponible en dólares", dolares(dispUSD))}
+        ${cifra("Deuda de tarjetas", pesos(deuARS) + (deuUSD ? " + " + dolares(deuUSD) : ""), "Según los últimos resúmenes")}
+        ${cifra("Neto total en dólares", netoUSD == null ? "—" : dolares(netoUSD),
+                t ? `Dólar ${t.tipo} ${pesos(t.valor)} del ${dm(t.fecha)}` : "Carga el dólar en Patrimonio")}
+      </div>
+      <div class="dos">
+        <div class="panel"><h3>Saldos por cuenta</h3><div class="tabla" style="border:0"><table class="mini">
+          <tbody>${liq.map(filaSaldo).join("")}${tar.map(filaSaldo).join("")}</tbody></table></div></div>
+        <div class="panel"><h3>Últimos movimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
+          ${(ult || []).map((m) => `<tr><td>${dm(m.fecha)}</td><td>${esc(m.descripcion_original).slice(0, 48)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${esc(rubroDe(m.rubro_id)?.nombre ?? "Sin clasificar")}</div></td>
+            <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td></tr>`).join("")}
+        </tbody></table></div></div>
+      </div>`;
+  } catch (e) { $("hoy-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// ---------------- EL MES ----------------
+async function lineasDelMes(mes) {
+  const desde = mes + "-01";
+  const hasta = sumarDias(new Date(Date.UTC(+mes.slice(0, 4), +mes.slice(5, 7), 1)).toISOString().slice(0, 10), -1);
+  const { data, error } = await sb.from("v_lineas").select("*").gte("fecha", desde).lte("fecha", hasta);
+  if (error) throw error;
+  return data;
+}
+
+function resumirMes(lineas) {
+  const r = { gasto: 0, recurrente: 0, extra: 0, ingreso: 0, ahorro: 0, grupos: {}, rubros: {}, personas: {}, para: {}, sinTc: 0 };
+  for (const l of lineas) {
+    const rb = rubroDe(l.rubro_id); if (!rb) continue;
+    const v = l.monto_ars == null ? 0 : Number(l.monto_ars);
+    if (l.monto_ars == null) r.sinTc++;
+    if (rb.tipo === "ingreso") { r.ingreso += v; continue; }
+    if (rb.tipo === "ahorro") { r.ahorro += -v; continue; }
+    if (rb.tipo !== "gasto") continue;
+    const g = grupoDe(l.rubro_id).nombre, gasto = -v;
+    r.gasto += gasto;
+    l.es_extraordinario ? (r.extra += gasto) : (r.recurrente += gasto);
+    r.grupos[g] ??= { rec: 0, ext: 0 };
+    l.es_extraordinario ? (r.grupos[g].ext += gasto) : (r.grupos[g].rec += gasto);
+    const clave = rb.nombre + " (" + g + ")";
+    r.rubros[clave] = (r.rubros[clave] || 0) + gasto;
+    const pe = nombrePersona(l.persona_id); r.personas[pe] = (r.personas[pe] || 0) + gasto;
+    if (l.beneficiario_id) { const b = nombrePersona(l.beneficiario_id); r.para[b] = (r.para[b] || 0) + gasto; }
+  }
+  return r;
+}
+
+async function verMes() {
+  try {
+    const mes = $("mesSel").value || hoyISO().slice(0, 7);
+    const ant = new Date(Date.UTC(+mes.slice(0, 4), +mes.slice(5, 7) - 2, 1)).toISOString().slice(0, 7);
+    const [act, prev] = await Promise.all([lineasDelMes(mes), lineasDelMes(ant)]);
+    const r = resumirMes(act), p = resumirMes(prev);
+    const varPct = p.recurrente ? ((r.recurrente - p.recurrente) / p.recurrente) * 100 : null;
+    const grupos = Object.entries(r.grupos).sort((a, b) => (b[1].rec + b[1].ext) - (a[1].rec + a[1].ext));
+    const lista = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1])
+      .map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${pesos(v)}</td></tr>`).join("");
+
+    $("mes-c").innerHTML = `
+      <div class="cifras">
+        ${cifra("Gasto total", pesos(r.gasto), `Recurrente ${pesos(r.recurrente)}, extraordinario ${pesos(r.extra)}`, "total")}
+        ${cifra("Gasto recurrente vs. mes anterior", varPct == null ? "—" : (varPct >= 0 ? "+" : "") + varPct.toFixed(1) + "%", `Mes anterior: ${pesos(p.recurrente)}`)}
+        ${cifra("Ingresos", pesos(r.ingreso))}
+        ${cifra("Ahorro (capital de préstamos)", pesos(r.ahorro))}
+      </div>
+      ${r.sinTc ? `<div class="msg info">${r.sinTc} movimientos en dólares no tienen tipo de cambio y no suman al total.</div>` : ""}
+      ${act.length ? "" : `<div class="msg info">No hay movimientos cargados para este mes.</div>`}
+      <div class="panel"><h3>Gasto por grupo</h3><div class="lienzo"><canvas id="gMes"></canvas></div></div>
+      <div class="dos">
+        <div class="panel"><h3>Por rubro</h3><table class="mini"><tbody>${lista(r.rubros)}</tbody></table></div>
+        <div>
+          <div class="panel"><h3>Quién pagó</h3><table class="mini"><tbody>${lista(r.personas)}</tbody></table></div>
+          <div class="panel"><h3>Para quién</h3><table class="mini"><tbody>${lista(r.para) || `<tr><td class="tenue">Sin beneficiarios asignados</td></tr>`}</tbody></table></div>
+        </div>
+      </div>`;
+
+    grafico("gMes", {
+      type: "bar",
+      data: { labels: grupos.map((g) => g[0]), datasets: [
+        { label: "Recurrente", data: grupos.map((g) => Math.round(g[1].rec)), backgroundColor: css("--tinta") },
+        { label: "Extraordinario", data: grupos.map((g) => Math.round(g[1].ext)), backgroundColor: css("--laton") } ] },
+      options: { indexAxis: "y", maintainAspectRatio: false, scales: { x: { stacked: true, ticks: { callback: (v) => pesos(v) } }, y: { stacked: true } },
+                 plugins: { tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${pesos(c.raw)}` } } } },
+    });
+  } catch (e) { $("mes-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// ---------------- LO QUE VIENE ----------------
+async function verViene() {
+  try {
+    const hoy = hoyISO(), fin = sumarDias(hoy, 60);
+    const [ss, fl] = await Promise.all([
+      saldos(),
+      sb.from("v_flujo_proyectado").select("*").gte("fecha", hoy).lte("fecha", fin).order("fecha"),
+    ]);
+    if (fl.error) throw fl.error;
+    const inicial = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito" && s.moneda === "ARS")
+                      .reduce((a, s) => a + Number(s.saldo_estimado), 0);
+    let saldo = inicial;
+    const filas = fl.data.filter((c) => c.moneda === "ARS").map((c) => { saldo += Number(c.monto); return { ...c, saldo }; });
+    const egresos = filas.filter((f) => f.monto < 0).reduce((a, f) => a - Number(f.monto), 0);
+    const ingresos = filas.filter((f) => f.monto > 0).reduce((a, f) => a + Number(f.monto), 0);
+    const minimo = filas.reduce((m, f) => Math.min(m, f.saldo), inicial);
+
+    $("viene-c").innerHTML = `
+      <div class="cifras">
+        ${cifra("Disponible hoy en pesos", pesos(inicial), "", "total")}
+        ${cifra("Egresos comprometidos (60 días)", pesos(egresos))}
+        ${cifra("Ingresos esperados (60 días)", pesos(ingresos))}
+        ${cifra("Saldo más bajo proyectado", pesos(minimo), minimo < 0 ? "Vas a necesitar fondos antes de esa fecha" : "")}
+      </div>
+      <div class="panel"><h3>Saldo proyectado</h3><div class="lienzo"><canvas id="gViene"></canvas></div></div>
+      <div class="panel"><h3>Próximos vencimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
+        ${filas.map((f) => `<tr><td>${dm(f.fecha)}</td><td>${esc(f.descripcion)}${f.indexacion !== "ninguna" ? ` <span class="tenue">(${f.indexacion === "uva" ? "ajusta por UVA" : "estimado"})</span>` : ""}</td>
+          <td class="num ${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</td><td class="num tenue">${pesos(f.saldo)}</td></tr>`).join("") ||
+          `<tr><td class="tenue">No hay compromisos cargados en los próximos 60 días.</td></tr>`}
+      </tbody></table></div>
+      <p class="tenue">Incluye hipoteca, alquiler, seguros, expensas y cuotas de tarjeta cargadas como compromisos. Los vencimientos de cada resumen de tarjeta se sumarán automáticamente cuando los lectores los registren.</p></div>`;
+
+    grafico("gViene", {
+      type: "line",
+      data: { labels: [dm(hoy), ...filas.map((f) => dm(f.fecha))],
+              datasets: [{ label: "Saldo proyectado", data: [inicial, ...filas.map((f) => Math.round(f.saldo))],
+                           borderColor: css("--laton"), backgroundColor: css("--laton"), stepped: true, pointRadius: 3 }] },
+      options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => pesos(c.raw) } } },
+                 scales: { y: { ticks: { callback: (v) => pesos(v) } } } },
+    });
+  } catch (e) { $("viene-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// ---------------- PATRIMONIO ----------------
+async function verPatrimonio() {
+  try {
+    const [ss, t, va, pr] = await Promise.all([
+      saldos(), tipoCambio(),
+      sb.from("valuaciones").select("*, activos(nombre, tipo)").order("fecha", { ascending: false }),
+      sb.from("prestamos").select("*, activos(nombre)"),
+    ]);
+    const v = t?.valor;
+    const usd = (n, mon) => (mon === "USD" ? Number(n) : v ? Number(n) / v : 0);
+    const liq = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito").reduce((a, s) => a + usd(s.saldo_estimado, s.moneda), 0);
+    const tar = ss.filter((s) => s.cuenta?.tipo === "tarjeta_credito").reduce((a, s) => a + usd(s.saldo_estimado, s.moneda), 0);
+    const ultimas = {};
+    (va.data || []).forEach((x) => { if (!ultimas[x.activo_id]) ultimas[x.activo_id] = x; });
+    const activos = Object.values(ultimas).map((x) => ({ nombre: x.activos.nombre, usd: usd(x.valor, x.moneda), x }));
+    const deudas = (pr.data || []).map((p) => ({ nombre: p.nombre, usd: -usd(p.saldo_capital, p.moneda), p }));
+    const totAct = activos.reduce((a, x) => a + x.usd, 0), totDeu = deudas.reduce((a, x) => a + x.usd, 0);
+    const neto = liq + tar + totAct + totDeu;
+
+    $("pat-c").innerHTML = `
+      <div class="barra-filtros">
+        <label for="tcIn" style="margin:0">Dólar de referencia (MEP)</label>
+        <input id="tcIn" type="text" inputmode="decimal" value="${v ?? ""}" style="width:8rem">
+        <button class="sec" id="tcBtn" type="button">Actualizar dólar</button>
+        <span class="tenue">${t ? `Último: ${t.tipo} del ${dm(t.fecha)}` : "Todavía no hay dólar cargado"}</span>
+      </div>
+      <div class="cifras">
+        ${cifra("Patrimonio neto", dolares(neto), "Activos + liquidez − deudas", "total")}
+        ${cifra("Liquidez", dolares(liq))}
+        ${cifra("Bienes", dolares(totAct))}
+        ${cifra("Deudas", dolares(totDeu + tar), "Préstamos y tarjetas")}
+      </div>
+      <div class="dos">
+        <div class="panel"><h3>Bienes</h3><table class="mini"><tbody>
+          ${activos.map((a) => `<tr><td>${esc(a.nombre)}<div class="tenue">${esc(a.x.fuente)}, ${dm(a.x.fecha)}${a.x.valor_min != a.x.valor_max ? ` (rango ${dolares(a.x.valor_min)} a ${dolares(a.x.valor_max)})` : ""}</div></td><td class="num">${dolares(a.usd)}</td></tr>`).join("")}
+          <tr><td>Liquidez (cuentas y efectivo)</td><td class="num">${dolares(liq)}</td></tr>
+        </tbody></table></div>
+        <div class="panel"><h3>Deudas</h3><table class="mini"><tbody>
+          ${deudas.map((d) => `<tr><td>${esc(d.nombre)}<div class="tenue">Cuota ${d.p.cuota_actual} de ${d.p.cuotas_total}, saldo ${pesos(d.p.saldo_capital)} al ${dm(d.p.saldo_fecha)}${d.p.indexacion === "uva" ? ", ajusta por UVA" : ""}</div></td><td class="num menos">${dolares(d.usd)}</td></tr>`).join("")}
+          <tr><td>Tarjetas de crédito</td><td class="num menos">${dolares(tar)}</td></tr>
+        </tbody></table></div>
+      </div>`;
+
+    $("tcBtn").onclick = async () => {
+      const n = Number(String($("tcIn").value).replace(/\./g, "").replace(",", "."));
+      if (!n) return;
+      const { error } = await sb.from("tipos_cambio").upsert({ fecha: hoyISO(), tipo: "mep", venta: n });
+      if (error) return alert(error.message);
+      verPatrimonio();
+    };
+  } catch (e) { $("pat-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// ---------------- PENDIENTES ----------------
+async function verPendientes() {
+  try {
+    const sinId = ref.rubros.find((r) => r.nombre === "Sin identificar")?.id;
+    const internos = ref.rubros.filter((r) => ["Transferencia interna", "Pago de tarjeta", "Movimiento de efectivo"].includes(r.nombre)).map((r) => r.id);
+    const [revisar, transito, internasPend] = await Promise.all([
+      sb.from("movimientos").select("id, fecha, descripcion_original, monto, moneda, cuenta_id, rubro_id, confianza")
+        .or(`rubro_id.is.null,rubro_id.eq.${sinId},confianza.in.(sugerido,probable)`).order("fecha", { ascending: false }).limit(200),
+      sb.from("v_transferencias_en_transito").select("*").order("fecha"),
+      sb.from("movimientos").select("id, fecha, descripcion_original, monto, moneda, cuenta_id")
+        .eq("estado_conciliacion", "pendiente").gt("monto", 0).in("rubro_id", internos).order("fecha"),
+    ]);
+    const err = [revisar, transito, internasPend].find((r) => r.error);
+    if (err) throw err.error;
+
+    $("pend-c").innerHTML = `
+      <div class="cifras">
+        ${cifra("Para revisar", revisar.data.length, "Sin clasificar, sin identificar, sugeridos o probables", "total")}
+        ${cifra("Salidas sin contraparte", transito.data.length, "Transferencias o pagos que no aparecen del otro lado")}
+        ${cifra("Entradas sin contraparte", internasPend.data.length, "Por ejemplo, transferencias desde cuentas aún no cargadas")}
+      </div>
+      <div class="panel"><h3>Para revisar</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
+        ${revisar.data.map((m) => `<tr data-id="${m.id}"><td>${dm(m.fecha)}</td>
+          <td class="d">${esc(m.descripcion_original)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${m.rubro_id ? esc(rubroDe(m.rubro_id)?.nombre) + " (" + m.confianza + ")" : "Sin clasificar"}</div></td>
+          <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td>
+          <td><select aria-label="Rubro">${opcionesRubro(m.rubro_id)}</select></td>
+          <td><button class="sec" data-confirmar type="button">Confirmar</button></td></tr>`).join("") ||
+          `<tr><td class="tenue">No hay nada para revisar.</td></tr>`}
+      </tbody></table></div></div>
+      <div class="dos">
+        <div class="panel"><h3>Salidas sin contraparte</h3><table class="mini"><tbody>
+          ${transito.data.map((t) => `<tr><td>${dm(t.fecha)}</td><td>${esc(t.desde)}<div class="tenue">${esc(t.descripcion_original)}</div></td><td class="num menos">${pesos(t.monto)}</td></tr>`).join("") || `<tr><td class="tenue">Todo emparejado.</td></tr>`}
+        </tbody></table></div>
+        <div class="panel"><h3>Entradas sin contraparte</h3><table class="mini"><tbody>
+          ${internasPend.data.map((t) => `<tr><td>${dm(t.fecha)}</td><td>${esc(cuentaDe(t.cuenta_id)?.alias)}<div class="tenue">${esc(t.descripcion_original)}</div></td><td class="num mas">${conMoneda(t.monto, t.moneda)}</td></tr>`).join("") || `<tr><td class="tenue">Todo emparejado.</td></tr>`}
+        </tbody></table></div>
+      </div>`;
+
+    $("pend-c").querySelectorAll("[data-confirmar]").forEach((b) => b.onclick = async () => {
+      const tr = b.closest("tr"), rubro = tr.querySelector("select").value;
+      if (!rubro) return alert("Elige un rubro primero.");
+      const { error } = await sb.from("movimientos").update({ rubro_id: +rubro, confianza: "confirmado" }).eq("id", +tr.dataset.id);
+      if (error) return alert(error.message);
+      tr.remove();
+    });
+  } catch (e) { $("pend-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// ---------------- RUBROS ----------------
+function verRubros() {
+  const grupos = ref.rubros.filter((r) => !r.padre_id);
+  $("rub-c").innerHTML = `
+    <div class="panel"><h3>Agregar rubro</h3>
+      <div class="barra-filtros">
+        <select id="rubGrupo" aria-label="Grupo">${grupos.map((g) => `<option value="${g.id}">${esc(g.nombre)}</option>`).join("")}</select>
+        <input id="rubNombre" type="text" placeholder="Nombre del rubro" aria-label="Nombre del rubro">
+        <button id="rubBtn" type="button">Agregar rubro</button>
+      </div></div>
+    <div class="dos">${[0, 1].map((col) => `<div>${grupos.filter((_, i) => i % 2 === col).map((g) => `
+      <div class="panel"><h3>${esc(g.nombre)}</h3><div class="tenue">${ref.rubros.filter((r) => r.padre_id === g.id).map((r) => esc(r.nombre)).join(", ")}</div></div>`).join("")}</div>`).join("")}
+    </div>`;
+  $("rubBtn").onclick = async () => {
+    const nombre = $("rubNombre").value.trim(); if (!nombre) return;
+    const g = ref.rubros.find((r) => r.id === +$("rubGrupo").value);
+    const { error } = await sb.from("rubros").insert({ padre_id: g.id, nombre, tipo: g.tipo });
+    if (error) return alert(error.message.includes("duplicate") ? "Ese rubro ya existe en el grupo." : error.message);
+    await cargarReferencias(); verRubros();
+  };
+}
+
+// Recuperación de contraseña: al volver del link del mail, pide la nueva clave
+sb.auth.onAuthStateChange(async (evento) => {
+  if (evento !== "PASSWORD_RECOVERY") return;
+  history.replaceState(null, "", location.pathname);
+  const nueva = prompt("Escribe tu nueva contraseña (mínimo 8 caracteres):");
+  if (nueva) {
+    const { error } = await sb.auth.updateUser({ password: nueva });
+    alert(error ? "No se pudo cambiar la contraseña: " + error.message : "Contraseña actualizada.");
+  }
+  iniciar();
+});
 
 iniciar();
 </script>
