@@ -5,10 +5,12 @@ import fs from "fs"; import path from "path";
 import { leerResumen } from "../lectores.js";
 const dir = "privado/muestras";
 let fallas = 0;
-for (const f of fs.readdirSync(dir).filter((x) => x.toLowerCase().endsWith(".pdf"))) {
+const pdfs = fs.readdirSync(dir, { recursive: true }).filter((x) => x.toLowerCase().endsWith(".pdf")).sort();
+for (const f of pdfs) {
   try {
     const r = await leerResumen(pdfjs, new Uint8Array(fs.readFileSync(path.join(dir, f))));
     console.log(`\n${f} → ${r.documento.formato} (${r.documento.periodo_desde} a ${r.documento.periodo_hasta})`);
+    if (r.documento.tarjeta) console.log("  vencimientos:", JSON.stringify(r.documento.tarjeta));
     for (const c of r.cuentas) for (const k of c.conciliacion) {
       const suma = c.movimientos.filter((m) => m.moneda === k.moneda).reduce((s, m) => s + m.monto, 0);
       const dif = Math.round((k.saldo_inicial + suma - k.saldo_final) * 100) / 100;

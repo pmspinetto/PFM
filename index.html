@@ -143,7 +143,7 @@ td.d{min-width:260px;max-width:380px}
   <section class="vista oculto" id="v-importar"><h2>Importar resumen</h2>
     <div id="soltar">
       <p><strong>Arrastra acá el PDF de un resumen</strong></p>
-      <p class="chico">Santander (cuenta y Visa), Macro, BBVA o Mercado Pago</p>
+      <p class="chico">Santander (cuenta y Visa), Macro (cuenta, Visa y Amex), BBVA (cuenta, Visa y Mastercard), Ciudad o Mercado Pago</p>
       <p style="margin-top:1rem"><button class="sec" id="btnElegir" type="button">Elegir archivo</button></p>
       <input id="archivo" type="file" accept="application/pdf" class="oculto">
     </div>
@@ -300,7 +300,7 @@ function prepararEstado(data, hash) {
     bloques: data.cuentas.map((c) => {
       const usados = {};
       return {
-        cuenta_id: c.cuenta_id, descripcion: c.descripcion, conciliacion: c.conciliacion,
+        cuenta_id: c.cuenta_id, identificador: c.identificador, descripcion: c.descripcion, conciliacion: c.conciliacion,
         movs: c.movimientos.map((m) => {
           let id = m.comprobante && String(m.comprobante).length >= 4 ? String(m.comprobante)
                  : `${m.fecha}|${m.monto}|${m.moneda}|${normalizar(m.descripcion).slice(0, 40)}`;
@@ -470,7 +470,9 @@ $("btnGuardar").onclick = async () => {
           periodo_desde: estado.documento.periodo_desde,
           periodo_hasta: estado.documento.periodo_hasta,
           hash: `${estado.hash}-${b.cuenta_id}`,
+          tarjeta: estado.documento.tarjeta ?? null,
         },
+        identificador: b.identificador,
         conciliar: b.conciliacion,
         movimientos: b.movs.map((m) => ({
           fecha: m.fecha, descripcion_original: m.descripcion, monto: m.monto, moneda: m.moneda,
@@ -574,23 +576,64 @@ function grafico(id, config) {
 }
 
 // ---------------- HOY ----------------
+// Deuda de tarjetas "a hoy": el saldo del último resumen cuenta solo hasta que se paga.
+// Se da por pagado si aparece el pago desde una cuenta (mismo importe, después del cierre)
+// o si ya pasó el vencimiento (débito automático). Se suman los consumos registrados después del cierre.
+async function deudaTarjetas(ss) {
+  const hoy = hoyISO();
+  const [docs, pagos] = await Promise.all([
+    sb.from("documentos").select("cuenta_id, periodo_hasta, vencimiento, proximo_cierre, proximo_vencimiento")
+      .eq("tipo", "resumen_tarjeta").order("periodo_hasta", { ascending: false }),
+    sb.from("transferencias_internas").select("mov:movimientos!mov_salida_id(id, fecha, monto, moneda)")
+      .eq("tipo", "pago_tarjeta").is("mov_entrada_id", null),
+  ]);
+  if (docs.error) throw docs.error;
+  if (pagos.error) throw pagos.error;
+  const usados = new Set(), proximos = [];
+  const filas = ss.filter((s) => s.cuenta?.tipo === "tarjeta_credito").map((s) => {
+    const doc = docs.data.find((d) => d.cuenta_id === s.cuenta.id && d.periodo_hasta <= s.confirmado_al) ?? {};
+    const resumen = Number(s.saldo_confirmado), posteriores = Number(s.movimientos_posteriores);
+    // Sin vencimiento registrado (resúmenes importados antes): se estima 15 días después del cierre
+    const vto = doc.vencimiento ?? sumarDias(s.confirmado_al, 15);
+    const pago = resumen < 0 && pagos.data.map((x) => x.mov).find((m) => m && !usados.has(m.id) &&
+      m.moneda === s.moneda && m.fecha > s.confirmado_al && Math.abs(Number(m.monto) - resumen) < 0.005);
+    if (pago) usados.add(pago.id);
+    const saldado = resumen >= 0 || pago || hoy > vto;
+    if (!saldado) proximos.push(vto);
+    if (doc.proximo_vencimiento) proximos.push(doc.proximo_vencimiento);
+    const extra = posteriores ? ` + ${s.cant_movimientos} mov. posteriores` : "";
+    const estado = resumen >= 0 ? `Resumen al ${dm(s.confirmado_al)} sin deuda${extra}`
+      : pago ? `Resumen al ${dm(s.confirmado_al)} pagado el ${dm(pago.fecha)}${extra}`
+      : hoy > vto ? `Resumen al ${dm(s.confirmado_al)} vencido el ${dm(vto)}${doc.vencimiento ? "" : " (estimado)"}: se da por pagado${extra}`
+      : `Vence el ${dm(vto)}${doc.vencimiento ? "" : " (estimado)"}${extra}`;
+    // deuda_neta solo descuenta pagos que ya figuran en una cuenta: así el patrimonio no cuenta dos veces
+    return { ...s, saldo_estimado: (saldado ? Math.max(resumen, 0) : resumen) + posteriores, estado,
+             deuda_neta: (resumen >= 0 || pago ? Math.max(resumen, 0) : resumen) + posteriores };
+  });
+  const prox = proximos.sort()[0];
+  const nota = prox ? `Lo que falta pagar. Próximo vencimiento: ${dm(prox)}` : "Lo que falta pagar de los últimos resúmenes";
+  return { filas, nota };
+}
+
 async function verHoy() {
   try {
     const [ss, t] = await Promise.all([saldos(), tipoCambio()]);
+    const tarjetas = await deudaTarjetas(ss);
     const liq = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito");
-    const tar = ss.filter((s) => s.cuenta?.tipo === "tarjeta_credito");
+    const tar = tarjetas.filas;
     const tot = (lista, mon) => lista.filter((s) => s.moneda === mon).reduce((a, s) => a + Number(s.saldo_estimado), 0);
     const dispARS = tot(liq, "ARS"), dispUSD = tot(liq, "USD"), deuARS = tot(tar, "ARS"), deuUSD = tot(tar, "USD");
-    const netoUSD = t ? (dispARS + deuARS) / t.valor + dispUSD + deuUSD : null;
+    const neta = (mon) => tar.filter((s) => s.moneda === mon).reduce((a, s) => a + s.deuda_neta, 0);
+    const netoUSD = t ? (dispARS + neta("ARS")) / t.valor + dispUSD + neta("USD") : null;
 
     const { data: ult } = await sb.from("movimientos")
       .select("fecha, descripcion_original, monto, moneda, cuenta_id, rubro_id, origen")
       .order("fecha", { ascending: false }).order("id", { ascending: false }).limit(12);
 
     const filaSaldo = (s) => {
-      const estado = Number(s.cant_movimientos) > 0
+      const estado = s.estado ?? (Number(s.cant_movimientos) > 0
         ? `Estimado: confirmado al ${dm(s.confirmado_al)} + ${s.cant_movimientos} mov.`
-        : `Confirmado al ${dm(s.confirmado_al)}`;
+        : `Confirmado al ${dm(s.confirmado_al)}`);
       return `<tr><td>${esc(s.alias)}</td><td class="num ${s.saldo_estimado < 0 ? "menos" : ""}">${conMoneda(s.saldo_estimado, s.moneda)}</td><td class="tenue">${estado}</td></tr>`;
     };
 
@@ -598,7 +641,7 @@ async function verHoy() {
       <div class="cifras">
         ${cifra("Disponible en pesos", pesos(dispARS), "Cuentas, billeteras y efectivo", "total")}
         ${cifra("Disponible en dólares", dolares(dispUSD))}
-        ${cifra("Deuda de tarjetas", pesos(deuARS) + (deuUSD ? " + " + dolares(deuUSD) : ""), "Según los últimos resúmenes")}
+        ${cifra("Deuda de tarjetas", pesos(deuARS) + (deuUSD ? " + " + dolares(deuUSD) : ""), tarjetas.nota)}
         ${cifra("Neto total en dólares", netoUSD == null ? "—" : dolares(netoUSD),
                 t ? `Dólar ${t.tipo} ${pesos(t.valor)} del ${dm(t.fecha)}` : "Carga el dólar en Patrimonio")}
       </div>
@@ -714,7 +757,7 @@ async function verViene() {
           <td class="num ${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</td><td class="num tenue">${pesos(f.saldo)}</td></tr>`).join("") ||
           `<tr><td class="tenue">No hay compromisos cargados en los próximos 60 días.</td></tr>`}
       </tbody></table></div>
-      <p class="tenue">Incluye hipoteca, alquiler, seguros, expensas y cuotas de tarjeta cargadas como compromisos. Los vencimientos de cada resumen de tarjeta se sumarán automáticamente cuando los lectores los registren.</p></div>`;
+      <p class="tenue">Incluye hipoteca, alquiler, seguros y expensas cargados como compromisos, y el vencimiento de cada resumen de tarjeta importado. El del próximo resumen es estimado: por ahora solo suma las cuotas ya conocidas.</p></div>`;
 
     grafico("gViene", {
       type: "line",
@@ -738,7 +781,7 @@ async function verPatrimonio() {
     const v = t?.valor;
     const usd = (n, mon) => (mon === "USD" ? Number(n) : v ? Number(n) / v : 0);
     const liq = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito").reduce((a, s) => a + usd(s.saldo_estimado, s.moneda), 0);
-    const tar = ss.filter((s) => s.cuenta?.tipo === "tarjeta_credito").reduce((a, s) => a + usd(s.saldo_estimado, s.moneda), 0);
+    const tar = (await deudaTarjetas(ss)).filas.reduce((a, s) => a + usd(s.deuda_neta, s.moneda), 0);
     const ultimas = {};
     (va.data || []).forEach((x) => { if (!ultimas[x.activo_id]) ultimas[x.activo_id] = x; });
     const activos = Object.values(ultimas).map((x) => ({ nombre: x.activos.nombre, usd: usd(x.valor, x.moneda), x }));
