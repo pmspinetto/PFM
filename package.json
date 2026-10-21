@@ -1,5 +1,5 @@
 {
-  "name": "timon-pfm",
+  "name": "family-office",
   "private": true,
   "type": "module",
   "scripts": { "probar": "node herramientas/probar-lectores.mjs" },
