@@ -7,8 +7,8 @@
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Public+Sans:wght@400;500;600;700&display=swap" rel="stylesheet">
-<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2.45.4/dist/umd/supabase.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="vendor/supabase-js@2.45.4/supabase.js"></script>
+<script src="vendor/chart.js@4.4.1/chart.umd.js"></script>
 <style>
 :root{
   --fondo:#EBF0EA; --papel:#F7FAF6; --tinta:#1D2B25; --tinta-2:#53645C;
@@ -161,9 +161,9 @@ td.d{min-width:260px;max-width:380px}
 </main>
 
 <script type="module">
-  import * as pdfjsLib from "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.min.mjs";
+  import * as pdfjsLib from "./vendor/pdfjs-dist@4.10.38/pdf.min.mjs";
   import { leerResumen } from "./lectores.js";
-  pdfjsLib.GlobalWorkerOptions.workerSrc = "https://cdn.jsdelivr.net/npm/pdfjs-dist@4.10.38/build/pdf.worker.min.mjs";
+  pdfjsLib.GlobalWorkerOptions.workerSrc = "./vendor/pdfjs-dist@4.10.38/pdf.worker.min.mjs";
   window.leerResumenLocal = (buf, password) => leerResumen(pdfjsLib, new Uint8Array(buf), { password });
 </script>
 <script>
