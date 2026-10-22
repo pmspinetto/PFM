@@ -93,3 +93,18 @@ function instalar() {
   ScriptApp.newTrigger("procesarAvisos").timeBased().everyMinutes(10).create();
   procesarAvisos();
 }
+
+// Prueba la conexión sin registrar nada: inicia sesión y llama a registrar_aviso con un
+// aviso vacío. Si el usuario es capturador, Supabase responde "Aviso incompleto".
+function probarConexion() {
+  var cfg = PropertiesService.getScriptProperties().getProperties();
+  var token = ingresar(cfg);
+  console.log("Inicio de sesión correcto.");
+  try {
+    llamar(cfg, token, "rpc/registrar_aviso", { p: {} });
+  } catch (e) {
+    if (/Aviso incompleto/.test(e.message)) return console.log("Todo listo: el usuario de captura tiene permiso para registrar avisos.");
+    if (/No autorizado/.test(e.message)) return console.error("Falta agregar el usuario a capturadores (el insert del SQL Editor).");
+    throw e;
+  }
+}
