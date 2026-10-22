@@ -76,11 +76,12 @@ var Avisos = (function () {
   }
 
   // ---------- Santander ----------
-  // "Tu adicional hizo un consumo" / "Hiciste un consumo": detalle en pares etiqueta-valor
+  // Consumo con tarjeta ("Pagaste $…", "Tu adicional hizo un consumo"): el cuerpo dice
+  // "detalle de(l) (tu) consumo … con (la|su|tu) Tarjeta … terminada en NNNN" y sigue
+  // con pares etiqueta-valor (Monto, Cuotas, Comercio, Fecha, Hora)
   function santander(t, asunto, recibido) {
-    var tarjeta = t.match(/con su\s+(?:Tarjeta\s+)?(.+?)\s+terminada en\s+(\d{4})/i) ||
-                  t.match(/con tu\s+(?:Tarjeta\s+)?(.+?)\s+terminada en\s+(\d{4})/i);
-    if (/consumo/i.test(asunto) && tarjeta) {
+    var tarjeta = t.match(/con (?:la|su|tu)\s+(?:Tarjeta\s+)?(.+?)\s+terminada en\s+(\d{4})/i);
+    if (/detalle de(?:l| tu) consumo/i.test(t) && tarjeta) {
       var imp = importe(campo(t, "Monto") || "");
       if (!imp) return null;
       var titular = (t.match(/consumo que hizo\s+(.+?)\s+con su/i) || [])[1] || null;

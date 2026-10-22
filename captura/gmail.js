@@ -30,15 +30,17 @@ function procesarAvisos() {
   var remitentes = Avisos.DOMINIOS.map(function (d) { return "from:" + d; }).join(" OR ");
   var hilos = GmailApp.search("(" + remitentes + ") newer_than:" + dias + "d", 0, 100);
 
-  var token = null, nuevoUltimo = ultimo, primerError = null;
+  var token = null, nuevoUltimo = ultimo, primerError = null, revisados = 0, avisos = 0;
   hilos.forEach(function (hilo) {
     hilo.getMessages().forEach(function (msg) {
       if (msg.getDate() < desdeFecha) return;
       if (msg.getDate() > nuevoUltimo) nuevoUltimo = msg.getDate();
+      revisados++;
       var etiqueta = null;
       try {
         var aviso = Avisos.leer({ de: msg.getFrom(), asunto: msg.getSubject(), html: msg.getBody(), recibido: msg.getDate() });
         if (!aviso) return;                       // publicidad u otro mail del banco
+        avisos++;
         if (!Avisos.autentico(msg.getRawContent())) {
           etiqueta = "fo/sospechoso";
           console.warn("No pasó la verificación: " + msg.getSubject() + " (" + msg.getFrom() + ")");
@@ -60,6 +62,8 @@ function procesarAvisos() {
       }
     });
   });
+  console.log("Mails de bancos revisados desde " + desdeFecha.toISOString() + ": " + revisados +
+              ". Avisos de movimientos reconocidos: " + avisos + ".");
   // Si algo falló, la próxima vez se vuelve a intentar desde ese mail
   props.setProperty("ULTIMO", (primerError ? new Date(primerError.getTime() - 1000) : nuevoUltimo).toISOString());
 }
