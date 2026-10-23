@@ -118,7 +118,7 @@ td.d{min-width:260px;max-width:380px}
   <nav id="menu" class="oculto" aria-label="Secciones">
     <a href="#hoy">Hoy</a><a href="#mes">El mes</a><a href="#viene">Lo que viene</a>
     <a href="#patrimonio">Patrimonio</a><a href="#pendientes">Pendientes</a>
-    <a href="#efectivo">Efectivo</a><a href="#importar">Importar</a><a href="#rubros">Rubros</a>
+    <a href="#efectivo">Efectivo</a><a href="#importar">Importar</a><a href="#rubros">Rubros y reglas</a>
   </nav>
   <span id="usuario"></span>
 </header>
@@ -144,13 +144,18 @@ td.d{min-width:260px;max-width:380px}
   <div id="app" class="oculto">
   <section class="vista" id="v-hoy"><h2>Hoy</h2><div id="hoy-c"></div></section>
   <section class="vista oculto" id="v-mes"><h2>El mes</h2>
-    <div class="barra-filtros"><label for="mesSel" style="margin:0">Mes</label><input type="month" id="mesSel"></div>
+    <div class="barra-filtros" id="filtrosMes"><label for="mesSel" style="margin:0">Hasta el mes</label><input type="month" id="mesSel">
+      <select id="fPeriodo" aria-label="Período"><option value="1">1 mes</option><option value="3">3 meses</option><option value="6">6 meses</option><option value="12">12 meses</option></select>
+      <select id="fPersona" aria-label="Quién pagó"></select><select id="fPara" aria-label="Para quién"></select>
+      <select id="fActivo" aria-label="Activo"></select><select id="fCuenta" aria-label="Cuenta"></select>
+      <select id="fMedio" aria-label="Medio de pago"><option value="">Todo medio de pago</option><option value="tarjeta">Tarjetas</option><option value="cuenta">Cuentas bancarias</option><option value="billetera">Billeteras</option><option value="efectivo">Efectivo</option></select>
+      <select id="fMoneda" aria-label="Moneda"><option value="">Toda moneda</option><option value="ARS">Pesos</option><option value="USD">Dólares</option></select></div>
     <div id="mes-c"></div></section>
   <section class="vista oculto" id="v-viene"><h2>Lo que viene</h2><div id="viene-c"></div></section>
   <section class="vista oculto" id="v-patrimonio"><h2>Patrimonio</h2><div id="pat-c"></div></section>
   <section class="vista oculto" id="v-pendientes"><h2>Pendientes</h2><div id="pend-c"></div></section>
   <section class="vista oculto" id="v-efectivo"><h2>Efectivo</h2><div id="efe-c"></div></section>
-  <section class="vista oculto" id="v-rubros"><h2>Rubros</h2><div id="rub-c"></div></section>
+  <section class="vista oculto" id="v-rubros"><h2>Rubros y reglas</h2><div id="rub-c"></div></section>
   <!-- Importación -->
   <section class="vista oculto" id="v-importar"><h2>Importar resumen</h2>
     <div id="soltar">
@@ -236,7 +241,7 @@ async function cargarReferencias() {
   const q = await Promise.all([
     sb.from("cuentas").select("id, alias, persona_id, tipo, activa, numero, cbu_cvu, institucion_id").order("alias"),
     sb.from("plasticos").select("id, cuenta_id, persona_id, ultimos4"),
-    sb.from("rubros").select("id, nombre, padre_id, tipo").order("id"),
+    sb.from("rubros").select("id, nombre, padre_id, tipo, activo").order("id"),
     sb.from("activos").select("id, nombre").order("nombre"),
     sb.from("personas").select("id, nombre, tipo").order("id"),
     sb.from("reglas").select("*").order("prioridad").order("id"),
@@ -338,6 +343,7 @@ function clasificar(m) {
   m.es_extraordinario = regla?.es_extraordinario ?? false;
   m.confianza = !regla ? "confirmado" : regla.modo === "sugerir" ? "sugerido" : regla.confianza;
   m.origenClasif = !regla ? "sin" : regla.modo === "sugerir" ? "sug" : "regla";
+  m.regla_id = regla?.id ?? null;
   return m;
 }
 
@@ -396,7 +402,7 @@ function opcionesRubro(sel) {
   const grupos = ref.rubros.filter((r) => !r.padre_id);
   return `<option value="">Elegir rubro</option>` + grupos.map((g) =>
     `<optgroup label="${esc(g.nombre)}">` +
-    ref.rubros.filter((r) => r.padre_id === g.id).map((r) =>
+    ref.rubros.filter((r) => r.padre_id === g.id && (r.activo !== false || r.id === sel)).map((r) =>
       `<option value="${r.id}" ${r.id === sel ? "selected" : ""}>${esc(r.nombre)}</option>`).join("") +
     `</optgroup>`).join("");
 }
@@ -499,6 +505,7 @@ $("bloques").addEventListener("change", (e) => {
   else m[f] = t.value ? +t.value : null;
   if (f === "rubro_id") {
     m.origenClasif = m.rubro_id ? "manual" : "sin";
+    m.regla_id = null;
     m.confianza = "confirmado";
     tr.className = m.rubro_id ? "" : "sin";
     tr.querySelector(".estado").textContent = m.rubro_id ? "Manual" : "Sin clasificar";
@@ -536,7 +543,7 @@ $("btnGuardar").onclick = async () => {
           tipo_cambio: m.tipo_cambio, rubro_id: m.rubro_id, persona_id: m.persona_id,
           beneficiario_id: m.beneficiario_id, activo_id: m.activo_id, plastico_id: m.plastico_id,
           es_extraordinario: m.es_extraordinario, cuota_nro: m.cuota_nro, cuotas_total: m.cuotas_total,
-          comprobante: m.comprobante, id_externo: m.id_externo, confianza: m.confianza,
+          comprobante: m.comprobante, id_externo: m.id_externo, confianza: m.confianza, regla_id: m.regla_id ?? null,
           partes: m.partes ?? [], prestamo: m.prestamo ?? null,
         })),
         reglas_nuevas: reglas,
@@ -601,7 +608,12 @@ async function iniciarTableros() {
   tablerosListos = true;
   window.addEventListener("hashchange", irAVista);
   $("mesSel").value = hoyISO().slice(0, 7);
-  $("mesSel").addEventListener("change", verMes);
+  const personas = ref.personas.filter((x) => x.tipo !== "empresa");
+  $("fPersona").innerHTML = opciones(personas.filter((x) => x.tipo !== "grupo"), null, "Quién pagó: todos");
+  $("fPara").innerHTML = opciones(personas, null, "Para quién: todos");
+  $("fActivo").innerHTML = opciones(ref.activos, null, "Todo activo");
+  $("fCuenta").innerHTML = opciones(ref.cuentas, null, "Toda cuenta");
+  $("filtrosMes").querySelectorAll("input, select").forEach((x) => x.addEventListener("change", verMes));
   // En vivo: cada cambio en movimientos refresca la vista abierta
   let espera = null;
   sb.channel("cambios")
@@ -778,12 +790,28 @@ function formularioSaldos(ss, tar) {
 }
 
 // ---------------- EL MES ----------------
-async function lineasDelMes(mes) {
-  const desde = mes + "-01";
-  const hasta = sumarDias(new Date(Date.UTC(+mes.slice(0, 4), +mes.slice(5, 7), 1)).toISOString().slice(0, 10), -1);
+// Período de `n` meses que termina en el mes `mes` (AAAA-MM); `atras` lo corre hacia el pasado
+function rangoMeses(mes, n, atras = 0) {
+  const fin = new Date(Date.UTC(+mes.slice(0, 4), +mes.slice(5, 7) - atras * n, 1));
+  const ini = new Date(Date.UTC(fin.getUTCFullYear(), fin.getUTCMonth() - n, 1));
+  return { desde: ini.toISOString().slice(0, 10), hasta: sumarDias(fin.toISOString().slice(0, 10), -1) };
+}
+
+const MEDIOS = { tarjeta: ["tarjeta_credito"], cuenta: ["caja_ahorro", "cuenta_sueldo", "cuenta_corriente"],
+                 billetera: ["billetera"], efectivo: ["caja_efectivo"] };
+function filtrarLineas(lineas) {
+  const v = (id) => ($(id).value ? +$(id).value : null);
+  const persona = v("fPersona"), para = v("fPara"), activo = v("fActivo"), cuenta = v("fCuenta");
+  const medio = $("fMedio").value, moneda = $("fMoneda").value;
+  return lineas.filter((l) => (!persona || l.persona_id === persona) && (!para || l.beneficiario_id === para) &&
+    (!activo || l.activo_id === activo) && (!cuenta || l.cuenta_id === cuenta) && (!moneda || l.moneda === moneda) &&
+    (!medio || MEDIOS[medio].includes(cuentaDe(l.cuenta_id)?.tipo)));
+}
+
+async function lineasDelRango({ desde, hasta }) {
   const { data, error } = await sb.from("v_lineas").select("*").gte("fecha", desde).lte("fecha", hasta);
   if (error) throw error;
-  return data;
+  return filtrarLineas(data);
 }
 
 function resumirMes(lineas) {
@@ -810,9 +838,9 @@ function resumirMes(lineas) {
 
 async function verMes() {
   try {
-    const mes = $("mesSel").value || hoyISO().slice(0, 7);
-    const ant = new Date(Date.UTC(+mes.slice(0, 4), +mes.slice(5, 7) - 2, 1)).toISOString().slice(0, 7);
-    const [act, prev] = await Promise.all([lineasDelMes(mes), lineasDelMes(ant)]);
+    const mes = $("mesSel").value || hoyISO().slice(0, 7), n = +$("fPeriodo").value || 1;
+    const [act, prev] = await Promise.all([lineasDelRango(rangoMeses(mes, n)), lineasDelRango(rangoMeses(mes, n, 1))]);
+    const periodo = n === 1 ? "mes" : `${n} meses`;
     const r = resumirMes(act), p = resumirMes(prev);
     const varPct = p.recurrente ? ((r.recurrente - p.recurrente) / p.recurrente) * 100 : null;
     const grupos = Object.entries(r.grupos).sort((a, b) => (b[1].rec + b[1].ext) - (a[1].rec + a[1].ext));
@@ -821,13 +849,13 @@ async function verMes() {
 
     $("mes-c").innerHTML = `
       <div class="cifras">
-        ${cifra("Gasto total", pesos(r.gasto), `Recurrente ${pesos(r.recurrente)}, extraordinario ${pesos(r.extra)}`, "total")}
-        ${cifra("Gasto recurrente vs. mes anterior", varPct == null ? "—" : (varPct >= 0 ? "+" : "") + varPct.toFixed(1) + "%", `Mes anterior: ${pesos(p.recurrente)}`)}
+        ${cifra(n === 1 ? "Gasto total" : `Gasto total (${periodo})`, pesos(r.gasto), `Recurrente ${pesos(r.recurrente)}, extraordinario ${pesos(r.extra)}`, "total")}
+        ${cifra(`Gasto recurrente vs. ${n === 1 ? "mes anterior" : `los ${periodo} anteriores`}`, varPct == null ? "—" : (varPct >= 0 ? "+" : "") + varPct.toFixed(1) + "%", `Antes: ${pesos(p.recurrente)}`)}
         ${cifra("Ingresos", pesos(r.ingreso))}
         ${cifra("Ahorro (capital de préstamos)", pesos(r.ahorro))}
       </div>
       ${r.sinTc ? `<div class="msg info">${r.sinTc} movimientos en dólares no tienen tipo de cambio y no suman al total.</div>` : ""}
-      ${act.length ? "" : `<div class="msg info">No hay movimientos cargados para este mes.</div>`}
+      ${act.length ? "" : `<div class="msg info">No hay movimientos cargados para este período y filtros.</div>`}
       <div class="panel"><h3>Gasto por grupo</h3><div class="lienzo"><canvas id="gMes"></canvas></div></div>
       <div class="dos">
         <div class="panel"><h3>Por rubro</h3><table class="mini"><tbody>${lista(r.rubros)}</tbody></table></div>
@@ -835,7 +863,9 @@ async function verMes() {
           <div class="panel"><h3>Quién pagó</h3><table class="mini"><tbody>${lista(r.personas)}</tbody></table></div>
           <div class="panel"><h3>Para quién</h3><table class="mini"><tbody>${lista(r.para) || `<tr><td class="tenue">Sin beneficiarios asignados</td></tr>`}</tbody></table></div>
         </div>
-      </div>`;
+      </div>
+      <div class="panel"><h3>Gastos del período</h3><div id="detalleMes" class="tenue">Cargando…</div></div>`;
+    detalleGastos(act);
 
     grafico("gMes", {
       type: "bar",
@@ -846,6 +876,65 @@ async function verMes() {
                  plugins: { tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${pesos(c.raw)}` } } } },
     });
   } catch (e) { $("mes-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// Detalle de gastos con descripción; las compras agrupadas se muestran como una sola línea
+async function detalleGastos(lineas) {
+  const gastos = {};
+  for (const l of lineas) {
+    if (rubroDe(l.rubro_id)?.tipo !== "gasto") continue;
+    const g = (gastos[l.movimiento_id] ??= { id: l.movimiento_id, fecha: l.fecha, cuenta_id: l.cuenta_id, rubro_id: l.rubro_id, persona_id: l.persona_id, monto: 0 });
+    g.monto += -Number(l.monto_ars ?? 0);
+  }
+  const top = Object.values(gastos).sort((a, b) => b.monto - a.monto).slice(0, 80);
+  if (!top.length) return ($("detalleMes").textContent = "Sin gastos en el período.");
+  const { data: movs, error } = await sb.from("movimientos").select("id, descripcion_original, compra_id").in("id", top.map((g) => g.id));
+  if (error) return ($("detalleMes").textContent = error.message);
+  const info = Object.fromEntries(movs.map((m) => [m.id, m]));
+  const idsCompra = [...new Set(movs.map((m) => m.compra_id).filter(Boolean))];
+  const compras = idsCompra.length ? (await sb.from("compras").select("*").in("id", idsCompra)).data ?? [] : [];
+  const filas = [], vistas = new Set();
+  for (const g of top) {
+    const cid = info[g.id]?.compra_id;
+    if (!cid) { filas.push({ ...g, desc: info[g.id]?.descripcion_original ?? "" }); continue; }
+    if (vistas.has(cid)) continue;
+    vistas.add(cid);
+    const partes = top.filter((x) => info[x.id]?.compra_id === cid);
+    filas.push({ compra: compras.find((c) => c.id === cid), partes, monto: partes.reduce((a, x) => a + x.monto, 0),
+                 fecha: partes[0].fecha, rubro_id: partes[0].rubro_id });
+  }
+  filas.sort((a, b) => b.monto - a.monto);
+  $("detalleMes").classList.remove("tenue");
+  $("detalleMes").innerHTML = `<p class="tenue" style="margin-top:0">Marca varios pagos de una misma compra (por ejemplo, un mueble pagado en dos cuentas) y agrúpalos para verlos como una sola.</p>
+    <div class="tabla" style="border:0"><table class="mini"><tbody>
+    ${filas.map((f) => f.compra
+      ? `<tr><td></td><td>${dm(f.fecha)}</td><td><strong>${esc(f.compra.descripcion)}</strong><div class="tenue">Compra agrupada · ${f.partes.length} pagos · ${esc(rubroDe(f.rubro_id)?.nombre ?? "")}</div></td>
+           <td class="num menos">${pesos(f.monto)}</td><td><button class="sec" data-desagrupar="${f.compra.id}" type="button">Desagrupar</button></td></tr>`
+      : `<tr><td><input type="checkbox" data-mov="${f.id}" aria-label="Elegir para agrupar"></td><td>${dm(f.fecha)}</td>
+           <td>${esc(f.desc)}<div class="tenue">${esc(cuentaDe(f.cuenta_id)?.alias)}, ${esc(rubroDe(f.rubro_id)?.nombre ?? "")}, ${esc(nombrePersona(f.persona_id))}</div></td>
+           <td class="num menos">${pesos(f.monto)}</td><td></td></tr>`).join("")}
+    </tbody></table></div>
+    <div class="barra-filtros" style="margin:.75rem 0 0"><button class="sec" id="btnAgrupar" type="button">Agrupar como una compra</button><span id="msgAgrupar" class="tenue"></span></div>`;
+  $("btnAgrupar").onclick = async () => {
+    const ids = [...$("detalleMes").querySelectorAll("input[data-mov]:checked")].map((x) => +x.dataset.mov);
+    if (ids.length < 2) return ($("msgAgrupar").textContent = "Marca al menos dos pagos.");
+    const nombre = prompt("¿Qué fue la compra? (por ejemplo, 4 mesas de luz)");
+    if (!nombre) return;
+    const elegidos = top.filter((g) => ids.includes(g.id));
+    const { data: c, error: e1 } = await sb.from("compras").insert({ descripcion: nombre.trim(),
+      fecha: elegidos.map((g) => g.fecha).sort()[0], rubro_id: elegidos[0].rubro_id, es_extraordinario: true }).select().single();
+    if (e1) return ($("msgAgrupar").textContent = e1.message);
+    const { error: e2 } = await sb.from("movimientos").update({ compra_id: c.id }).in("id", ids);
+    if (e2) return ($("msgAgrupar").textContent = e2.message);
+    verMes();
+  };
+  $("detalleMes").querySelectorAll("[data-desagrupar]").forEach((b) => b.onclick = async () => {
+    const id = +b.dataset.desagrupar;
+    const { error } = await sb.from("movimientos").update({ compra_id: null }).eq("compra_id", id);
+    if (error) return alert(error.message);
+    await sb.from("compras").delete().eq("id", id);
+    verMes();
+  });
 }
 
 // ---------------- LO QUE VIENE ----------------
@@ -1148,19 +1237,46 @@ async function verEfectivo() {
   } catch (e) { $("efe-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
 }
 
-// ---------------- RUBROS ----------------
+// ---------------- RUBROS Y REGLAS ----------------
 function verRubros() {
   const grupos = ref.rubros.filter((r) => !r.padre_id);
+  const opcGrupos = (sel) => grupos.map((g) => `<option value="${g.id}" ${g.id === sel ? "selected" : ""}>${esc(g.nombre)}</option>`).join("");
+  const personas = ref.personas.filter((x) => x.tipo !== "empresa");
+  const reglas = [...ref.reglas].sort((a, b) => a.prioridad - b.prioridad || a.id - b.id);
   $("rub-c").innerHTML = `
     <div class="panel"><h3>Agregar rubro</h3>
       <div class="barra-filtros">
-        <select id="rubGrupo" aria-label="Grupo">${grupos.map((g) => `<option value="${g.id}">${esc(g.nombre)}</option>`).join("")}</select>
+        <select id="rubGrupo" aria-label="Grupo">${opcGrupos(null)}</select>
         <input id="rubNombre" type="text" placeholder="Nombre del rubro" aria-label="Nombre del rubro">
         <button id="rubBtn" type="button">Agregar rubro</button>
       </div></div>
     <div class="dos">${[0, 1].map((col) => `<div>${grupos.filter((_, i) => i % 2 === col).map((g) => `
-      <div class="panel"><h3>${esc(g.nombre)}</h3><div class="tenue">${ref.rubros.filter((r) => r.padre_id === g.id).map((r) => esc(r.nombre)).join(", ")}</div></div>`).join("")}</div>`).join("")}
-    </div>`;
+      <div class="panel"><div class="barra-filtros" style="margin-bottom:.5rem">
+          <input type="text" value="${esc(g.nombre)}" data-nombre="${g.id}" aria-label="Nombre del grupo" style="font-weight:600">
+          <button class="sec" data-guardar-rubro="${g.id}" type="button">Renombrar</button></div>
+        <table class="mini"><tbody>${ref.rubros.filter((r) => r.padre_id === g.id).map((r) => `
+          <tr class="${r.activo === false ? "tenue" : ""}"><td><input type="text" value="${esc(r.nombre)}" data-nombre="${r.id}" aria-label="Nombre del rubro"></td>
+            <td><select data-grupo="${r.id}" aria-label="Grupo">${opcGrupos(g.id)}</select></td>
+            <td><label class="filtro" style="margin:0"><input type="checkbox" data-activo="${r.id}" ${r.activo !== false ? "checked" : ""}> Activo</label></td>
+            <td><button class="sec" data-guardar-rubro="${r.id}" type="button">Guardar</button></td></tr>`).join("")}
+        </tbody></table></div>`).join("")}</div>`).join("")}</div>
+    <div class="panel"><h3>Reglas (${reglas.length})</h3>
+      <p class="tenue" style="margin-top:0">Se evalúan por prioridad (menor primero). El patrón usa % como comodín. "Sugerir" propone el rubro pero pide confirmación (para pagos a personas).</p>
+      <div class="barra-filtros"><input id="regBuscar" type="text" placeholder="Buscar patrón o rubro" aria-label="Buscar regla"></div>
+      <div class="tabla"><table class="mini"><thead><tr><th>Prioridad</th><th>Patrón</th><th>Monto exacto</th><th>Modo</th><th>Rubro</th><th>Activo</th><th>Para quién</th><th>Extra.</th><th>Usada</th><th></th></tr></thead><tbody>
+        ${reglas.map((g) => `<tr data-regla="${g.id}" data-texto="${esc((g.patron + " " + (rubroDe(g.rubro_id)?.nombre ?? "")).toLowerCase())}">
+          <td><input type="text" inputmode="numeric" value="${g.prioridad}" data-f="prioridad" style="width:4.5rem" aria-label="Prioridad"></td>
+          <td><input type="text" value="${esc(g.patron)}" data-f="patron" aria-label="Patrón"></td>
+          <td><input type="text" inputmode="decimal" value="${g.monto_exacto ?? ""}" data-f="monto_exacto" style="width:7rem" aria-label="Monto exacto"></td>
+          <td><select data-f="modo" aria-label="Modo"><option value="auto" ${g.modo === "auto" ? "selected" : ""}>Automática</option><option value="sugerir" ${g.modo === "sugerir" ? "selected" : ""}>Sugerir</option></select></td>
+          <td><select data-f="rubro_id" aria-label="Rubro">${opcionesRubro(g.rubro_id)}</select></td>
+          <td><select data-f="activo_id" aria-label="Activo">${opciones(ref.activos, g.activo_id, "—")}</select></td>
+          <td><select data-f="beneficiario_id" aria-label="Para quién">${opciones(personas, g.beneficiario_id, "—")}</select></td>
+          <td><select data-f="es_extraordinario" aria-label="Extraordinario"><option value="">—</option><option value="true" ${g.es_extraordinario === true ? "selected" : ""}>Sí</option><option value="false" ${g.es_extraordinario === false ? "selected" : ""}>No</option></select></td>
+          <td class="num">${g.veces_aplicada}</td>
+          <td style="white-space:nowrap"><button class="sec" data-guardar-regla type="button">Guardar</button> <button class="sec" data-borrar-regla type="button">Borrar</button></td></tr>`).join("")}
+      </tbody></table></div><span id="msgReglas" class="tenue"></span></div>`;
+
   $("rubBtn").onclick = async () => {
     const nombre = $("rubNombre").value.trim(); if (!nombre) return;
     const g = ref.rubros.find((r) => r.id === +$("rubGrupo").value);
@@ -1168,6 +1284,42 @@ function verRubros() {
     if (error) return alert(error.message.includes("duplicate") ? "Ese rubro ya existe en el grupo." : error.message);
     await cargarReferencias(); verRubros();
   };
+  $("rub-c").querySelectorAll("[data-guardar-rubro]").forEach((b) => b.onclick = async () => {
+    const id = +b.dataset.guardarRubro, r = rubroDe(id);
+    const cambios = { nombre: $("rub-c").querySelector(`[data-nombre="${id}"]`).value.trim() };
+    if (!cambios.nombre) return alert("El nombre no puede quedar vacío.");
+    const sel = $("rub-c").querySelector(`[data-grupo="${id}"]`), act = $("rub-c").querySelector(`[data-activo="${id}"]`);
+    if (sel && +sel.value !== r.padre_id) { cambios.padre_id = +sel.value; cambios.tipo = rubroDe(+sel.value).tipo; }
+    if (act) cambios.activo = act.checked;
+    const { error } = await sb.from("rubros").update(cambios).eq("id", id);
+    if (error) return alert(error.message.includes("duplicate") ? "Ya hay un rubro con ese nombre en el grupo." : error.message);
+    await cargarReferencias(); verRubros();
+  });
+  $("regBuscar").oninput = () => {
+    const t = $("regBuscar").value.trim().toLowerCase();
+    $("rub-c").querySelectorAll("tr[data-regla]").forEach((tr) => tr.classList.toggle("oculto", !!t && !tr.dataset.texto.includes(t)));
+  };
+  $("rub-c").querySelectorAll("[data-guardar-regla]").forEach((b) => b.onclick = async () => {
+    const tr = b.closest("tr"), val = (f) => tr.querySelector(`[data-f="${f}"]`).value;
+    const patron = val("patron").trim();
+    if (!patron) return ($("msgReglas").textContent = "El patrón no puede quedar vacío.");
+    const num = (x) => (x ? +x : null);
+    const { error } = await sb.from("reglas").update({
+      prioridad: parseInt(val("prioridad"), 10) || 100, patron, monto_exacto: numeroAR(val("monto_exacto")),
+      modo: val("modo"), rubro_id: num(val("rubro_id")), activo_id: num(val("activo_id")),
+      beneficiario_id: num(val("beneficiario_id")), es_extraordinario: val("es_extraordinario") === "" ? null : val("es_extraordinario") === "true",
+    }).eq("id", +tr.dataset.regla);
+    if (error) return ($("msgReglas").textContent = error.message);
+    await cargarReferencias(); verRubros();
+    $("msgReglas").textContent = "Regla guardada.";
+  });
+  $("rub-c").querySelectorAll("[data-borrar-regla]").forEach((b) => b.onclick = async () => {
+    const tr = b.closest("tr");
+    if (!confirm("¿Borrar esta regla? Los movimientos ya clasificados no cambian.")) return;
+    const { error } = await sb.from("reglas").delete().eq("id", +tr.dataset.regla);
+    if (error) return ($("msgReglas").textContent = error.message);
+    await cargarReferencias(); verRubros();
+  });
 }
 
 // Recuperación de contraseña: al volver del link del mail, pide la nueva clave

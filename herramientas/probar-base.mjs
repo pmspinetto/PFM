@@ -136,3 +136,12 @@ await db.query("select desemparejar(901, 902)");
 console.log("H desemparejado:", (await db.query("select mov_salida_id, mov_entrada_id from transferencias_internas")).rows,
   (await db.query("select id, estado_conciliacion from movimientos order by id")).rows.map((r) => r.id + ":" + r.estado_conciliacion).join(" "));
 try { await db.query("select emparejar(902, 901)"); } catch (e) { console.log("H al revés:", e.message); }
+
+// R) Conteo de reglas aplicadas (avisos por mail + importación) y rubros desactivables
+await run(`delete from transferencias_internas; delete from movimientos where cuenta_id = 3;`);
+const regla = (await db.query("select id, veces_aplicada from reglas order by id limit 1")).rows[0];
+await guardar({ cuenta_id: 3, documento: doc("resumen_tarjeta", "2026-10-01", "2026-10-31", "r1"),
+  conciliar: [{ moneda: "ARS", fecha_inicial: "2026-09-30", saldo_inicial: 0, fecha_final: "2026-10-31", saldo_final: -30 }],
+  movimientos: [{ ...mov("2026-10-05", "COLECTIVO", -10, "ARS", "rr1"), regla_id: regla.id }, { ...mov("2026-10-06", "COLECTIVO", -20, "ARS", "rr2"), regla_id: regla.id }] });
+console.log("R regla: antes", regla.veces_aplicada, "después", (await db.query("select veces_aplicada from reglas where id = $1", [regla.id])).rows[0].veces_aplicada,
+  "| rubros.activo:", (await db.query("select bool_and(activo) as todos from rubros")).rows[0].todos);
