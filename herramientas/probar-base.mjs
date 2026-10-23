@@ -20,7 +20,10 @@ await run(`create or replace function es_autorizado() returns boolean language s
   insert into cuentas (alias, persona_id, institucion_id, tipo, moneda) values
     ('Banco $', 1, 1, 'caja_ahorro', 'ARS'), ('Visa', 1, 1, 'tarjeta_credito', 'BIMONEDA'), ('Otra visa', 1, 1, 'tarjeta_credito', 'BIMONEDA');
   insert into rubros (nombre, tipo) values ('Neutros', 'neutro');
-  insert into rubros (nombre, padre_id, tipo) values ('Pago de tarjeta', 1, 'neutro'), ('Transferencia interna', 1, 'neutro'), ('Movimiento de efectivo', 1, 'neutro');`);
+  insert into rubros (nombre, padre_id, tipo) values ('Pago de tarjeta', 1, 'neutro'), ('Transferencia interna', 1, 'neutro'), ('Movimiento de efectivo', 1, 'neutro');
+  insert into cuentas (alias, persona_id, tipo, moneda) values ('Caja $', 1, 'caja_efectivo', 'ARS');
+  insert into rubros (nombre, tipo) values ('Varios', 'gasto');
+  insert into rubros (nombre, padre_id, tipo) select 'Efectivo no identificado', id, 'gasto' from rubros where nombre = 'Varios';`);
 const R2 = 2;  // rubro Pago de tarjeta
 const guardar = async (p) => (await db.query("select guardar_importacion($1::jsonb) as r", [JSON.stringify(p)])).rows[0].r;
 const mov = (fecha, desc, monto, moneda, id, tc = null) => ({ fecha, descripcion_original: desc, monto, moneda, tipo_cambio: tc, rubro_id: R2, id_externo: id, confianza: "confirmado" });
@@ -78,3 +81,31 @@ console.log("D resumen:", await guardar({ cuenta_id: 2, documento: doc("resumen_
   movimientos: [mov("2026-10-21", "COLECTIVO SESENTA", -1500.5, "ARS", "r1"), mov("2026-10-24", "TIENDA C.01/03 (compra original 10/10/26)", -10000, "ARS", "r2")] }));
 console.table((await db.query("select fecha, descripcion_original, monto, origen from movimientos order by id")).rows);
 console.table((await db.query("select message_id, estado, movimiento_id is not null as con_mov from avisos order by id")).rows);
+
+// E) Efectivo: retiro de cajero → caja; arqueos con diferencia
+await run(`delete from transferencias_internas; delete from movimientos; delete from saldos; delete from documentos; delete from arqueos;`);
+const EF = 4;  // rubro Movimiento de efectivo
+console.log("E banco con retiro:", await guardar({ cuenta_id: 1, documento: doc("resumen_cuenta", "2026-10-01", "2026-10-31", "e1"),
+  conciliar: [{ moneda: "ARS", fecha_inicial: "2026-09-30", saldo_inicial: 100000, fecha_final: "2026-10-31", saldo_final: 50000 }],
+  movimientos: [{ ...mov("2026-10-10", "Extraccion cajero", -50000, "ARS", "x1"), rubro_id: EF }] }));
+console.table((await db.query(`select c.alias, m.monto, m.descripcion_original, m.estado_conciliacion from movimientos m join cuentas c on c.id = m.cuenta_id order by m.id`)).rows);
+console.log("pares efectivo:", (await db.query("select count(*)::int as n from transferencias_internas where mov_entrada_id is not null")).rows[0].n);
+const arqueo = async (contado, fecha) => (await db.query("select registrar_arqueo(4, $1::date, $2) as r", [fecha, contado])).rows[0].r;
+console.log("E primer arqueo:", await arqueo(50000, "2026-10-11"));
+await run(`insert into movimientos (cuenta_id, fecha, descripcion_original, monto, moneda, origen, estado_conciliacion) values (4, '2026-10-15', 'Verdulería', -10000, 'ARS', 'manual', 'no_aplica')`);
+console.log("E segundo arqueo:", await arqueo(35000, "2026-10-20"));
+console.log("E caja en vivo:", (await db.query("select saldo_estimado, fuente from v_saldo_vivo where cuenta_id = 4")).rows[0]);
+
+// S) Saldo informado del home banking y control de lo que falta explicar
+await run(`insert into saldos (cuenta_id, fecha, moneda, saldo, fuente) values (1, '2026-11-05', 'ARS', 80000, 'informado');
+  insert into movimientos (cuenta_id, fecha, descripcion_original, monto, moneda, origen) values (1, '2026-11-02', 'Aviso por mail', -5000, 'ARS', 'mail');`);
+console.log("S control:", (await db.query("select resumen_al, saldo_resumen, saldo_esperado, saldo_informado, sin_explicar from v_saldos_control where cuenta_id = 1")).rows[0]);
+console.log("S en vivo:", (await db.query("select confirmado_al, saldo_estimado, fuente from v_saldo_vivo where cuenta_id = 1")).rows[0]);
+console.log("S resumen del mismo día:", await guardar({ cuenta_id: 1, documento: doc("resumen_cuenta", "2026-11-01", "2026-11-05", "s2"),
+  conciliar: [{ moneda: "ARS", fecha_inicial: "2026-10-31", saldo_inicial: 50000, fecha_final: "2026-11-05", saldo_final: 79000 }],
+  movimientos: [mov("2026-11-03", "Transferencia recibida", 29000, "ARS", "s9")] }));
+console.log("S fuente tras el resumen:", (await db.query("select saldo, fuente from saldos where cuenta_id = 1 and fecha = '2026-11-05'")).rows[0]);
+
+// T) Tipos de cambio
+console.log("T cotizaciones:", (await db.query(`select registrar_tipos_cambio('{"cotizaciones":[{"fecha":"2026-10-23","tipo":"mep","compra":1500,"venta":1510},{"fecha":"2026-10-23","tipo":"blue","venta":1530},{"fecha":"2026-10-23","tipo":"raro","venta":1}]}'::jsonb) as n`)).rows[0].n,
+  (await db.query("select tipo, venta from tipos_cambio order by tipo")).rows);

@@ -5,3 +5,4 @@ node_modules/
 *.pdf
 .env*
 CLAUDE.md
+ESPECIFICACION.md

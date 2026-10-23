@@ -12,6 +12,8 @@
 //   SUPABASE_URL, SUPABASE_ANON_KEY, CAPTURA_EMAIL, CAPTURA_CLAVE
 //   REDIRECTORES (opcional): casillas propias que redirigen avisos con una regla de
 //   Outlook/Hotmail, separadas por coma
+// Además, una vez por día registra el dólar (oficial, MEP, blue y tarjeta) de dolarapi.com;
+// esa llamada diaria también mantiene activo el proyecto gratuito de Supabase.
 // =====================================================================
 
 var ETIQUETAS = ["fo/registrado", "fo/sospechoso", "fo/error"];
@@ -67,8 +69,41 @@ function procesarAvisos() {
   });
   console.log("Mails de bancos revisados desde " + desdeFecha.toISOString() + ": " + revisados +
               ". Avisos de movimientos reconocidos: " + avisos + ".");
+  try {
+    actualizarDolar(cfg, props, function () { return (token = token || ingresar(cfg)); }, false);
+  } catch (e) {
+    console.error("Dólar: " + e.message);
+  }
   // Si algo falló, la próxima vez se vuelve a intentar desde ese mail
   props.setProperty("ULTIMO", (primerError ? new Date(primerError.getTime() - 1000) : nuevoUltimo).toISOString());
+}
+
+// Una vez por día, desde las 18 h de Argentina (o cuando se fuerza): cotizaciones del día.
+// Aunque la fuente falle, la llamada a Supabase se hace igual y sirve de latido.
+function actualizarDolar(cfg, props, obtenerToken, forzar) {
+  var ahora = new Date(Date.now() - 3 * 3600000);   // hora de Argentina
+  var hoy = ahora.toISOString().slice(0, 10);
+  if (!forzar && (props.getProperty("DOLAR_DIA") === hoy || ahora.getUTCHours() < 18)) return;
+  var cotizaciones = [];
+  try {
+    var r = UrlFetchApp.fetch("https://dolarapi.com/v1/dolares", { muteHttpExceptions: true });
+    if (r.getResponseCode() !== 200) throw new Error("respuesta " + r.getResponseCode());
+    var tipos = { oficial: "oficial", blue: "blue", bolsa: "mep", tarjeta: "tarjeta" };
+    JSON.parse(r.getContentText()).forEach(function (d) {
+      if (tipos[d.casa] && d.venta) cotizaciones.push({ fecha: hoy, tipo: tipos[d.casa], compra: d.compra, venta: d.venta });
+    });
+  } catch (e) {
+    console.warn("No se pudo leer el dólar: " + e.message);
+  }
+  var n = llamar(cfg, obtenerToken(), "rpc/registrar_tipos_cambio", { p: { cotizaciones: cotizaciones } });
+  props.setProperty("DOLAR_DIA", hoy);
+  console.log("Cotizaciones del dólar registradas hoy: " + n);
+}
+
+// Ejecutar a mano para probar: registra el dólar del día sin esperar a las 18 h
+function probarDolar() {
+  var props = PropertiesService.getScriptProperties(), cfg = props.getProperties(), token = null;
+  actualizarDolar(cfg, props, function () { return (token = token || ingresar(cfg)); }, true);
 }
 
 // Inicia sesión con el usuario de captura y devuelve el token de acceso

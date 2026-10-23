@@ -34,7 +34,7 @@ button{cursor:pointer;border:1.5px solid var(--tinta);background:var(--tinta);co
 button.sec{background:transparent;color:var(--tinta)}
 button:disabled{opacity:.4;cursor:not-allowed}
 :focus-visible{outline:3px solid var(--laton);outline-offset:2px}
-input[type=email],input[type=password],input[type=text],select{background:var(--papel);border:1px solid var(--renglon);border-radius:3px;padding:.5rem .6rem}
+input[type=email],input[type=password],input[type=text],input[type=date],select{background:var(--papel);border:1px solid var(--renglon);border-radius:3px;padding:.5rem .6rem}
 label{display:block;font-size:.875rem;color:var(--tinta-2);margin:.75rem 0 .25rem}
 .oculto{display:none!important}
 .caja{background:var(--papel);border:1px solid var(--renglon);border-radius:4px;padding:1.5rem}
@@ -100,6 +100,14 @@ nav#menu a.activo{color:var(--tinta);background:var(--papel);box-shadow:inset 0 
 .mas{color:var(--entra)} .menos{color:var(--sale)}
 .tenue{color:var(--tinta-2);font-size:.85rem}
 .barra-filtros{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;margin-bottom:1rem}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:.25rem 1rem;align-items:end}
+.form-grid label{margin:.5rem 0 .2rem}
+.form-grid input,.form-grid select{width:100%}
+.form-grid .acciones{display:flex;gap:.75rem;align-items:center;margin-top:.75rem;grid-column:1/-1}
+.saldo-in{width:10rem;text-align:right}
+.alterna{display:inline-flex;border:1px solid var(--renglon);border-radius:3px;overflow:hidden}
+.alterna button{border:0;border-radius:0;background:transparent;color:var(--tinta-2);padding:.45rem .9rem;font-weight:500}
+.alterna button.activo{background:var(--tinta);color:var(--papel)}
 .lienzo{position:relative;height:320px}
 td.d{min-width:260px;max-width:380px}
 </style>
@@ -110,7 +118,7 @@ td.d{min-width:260px;max-width:380px}
   <nav id="menu" class="oculto" aria-label="Secciones">
     <a href="#hoy">Hoy</a><a href="#mes">El mes</a><a href="#viene">Lo que viene</a>
     <a href="#patrimonio">Patrimonio</a><a href="#pendientes">Pendientes</a>
-    <a href="#importar">Importar</a><a href="#rubros">Rubros</a>
+    <a href="#efectivo">Efectivo</a><a href="#importar">Importar</a><a href="#rubros">Rubros</a>
   </nav>
   <span id="usuario"></span>
 </header>
@@ -141,6 +149,7 @@ td.d{min-width:260px;max-width:380px}
   <section class="vista oculto" id="v-viene"><h2>Lo que viene</h2><div id="viene-c"></div></section>
   <section class="vista oculto" id="v-patrimonio"><h2>Patrimonio</h2><div id="pat-c"></div></section>
   <section class="vista oculto" id="v-pendientes"><h2>Pendientes</h2><div id="pend-c"></div></section>
+  <section class="vista oculto" id="v-efectivo"><h2>Efectivo</h2><div id="efe-c"></div></section>
   <section class="vista oculto" id="v-rubros"><h2>Rubros</h2><div id="rub-c"></div></section>
   <!-- Importación -->
   <section class="vista oculto" id="v-importar"><h2>Importar resumen</h2>
@@ -570,10 +579,20 @@ const rubroDe = (id) => ref.rubros.find((r) => r.id === id);
 const grupoDe = (id) => { const r = rubroDe(id); if (!r) return null; return r.padre_id ? rubroDe(r.padre_id) : r; };
 const cuentaDe = (id) => ref.cuentas.find((c) => c.id === id);
 const nombrePersona = (id) => ref.personas.find((p) => p.id === id)?.nombre ?? "Sin asignar";
+// "1.234.567,89", "1234567.89" o "1234567" → número
+function numeroAR(t) {
+  t = String(t ?? "").trim().replace(/[^\d.,-]/g, "");
+  if (!t) return null;
+  if (t.includes(",")) t = t.replace(/\./g, "").replace(",", ".");
+  else if ((t.match(/\./g) || []).length > 1 || /\.\d{3}$/.test(t)) t = t.replace(/\./g, "");
+  const n = Number(t);
+  return Number.isFinite(n) ? n : null;
+}
 const graficos = {};
 let tc = null;
 
-const VISTAS = { hoy: verHoy, mes: verMes, viene: verViene, patrimonio: verPatrimonio, pendientes: verPendientes, importar: null, rubros: verRubros };
+const VISTAS = { hoy: verHoy, mes: verMes, viene: verViene, patrimonio: verPatrimonio, pendientes: verPendientes,
+                 efectivo: verEfectivo, importar: null, rubros: verRubros };
 
 let tablerosListos = false;
 async function iniciarTableros() {
@@ -612,7 +631,7 @@ async function tipoCambio() {
 async function saldos() {
   const { data, error } = await sb.from("v_saldo_vivo").select("*");
   if (error) throw error;
-  return data.map((s) => ({ ...s, cuenta: ref.cuentas.find((c) => c.alias === s.alias) }));
+  return data.map((s) => ({ ...s, cuenta: ref.cuentas.find((c) => c.id === s.cuenta_id) }));
 }
 
 function cifra(lbl, val, sub = "", clase = "") {
@@ -642,6 +661,13 @@ async function deudaTarjetas(ss) {
   const filas = ss.filter((s) => s.cuenta?.tipo === "tarjeta_credito").map((s) => {
     const doc = docs.data.find((d) => d.cuenta_id === s.cuenta.id && d.periodo_hasta <= s.confirmado_al) ?? {};
     const resumen = Number(s.saldo_confirmado), posteriores = Number(s.movimientos_posteriores);
+    const extra = posteriores ? ` + ${s.cant_movimientos} mov. posteriores` : "";
+    // Saldo cargado a mano desde el home banking: es la deuda de ese día, sin lógica de vencimientos
+    if (s.fuente === "informado") {
+      if (doc.proximo_vencimiento && doc.proximo_vencimiento >= hoy) proximos.push(doc.proximo_vencimiento);
+      return { ...s, saldo_estimado: resumen + posteriores, deuda_neta: resumen + posteriores,
+               estado: `Saldo informado el ${dm(s.confirmado_al)}${extra}` };
+    }
     // Sin vencimiento registrado (resúmenes importados antes): se estima 15 días después del cierre
     const vto = doc.vencimiento ?? sumarDias(s.confirmado_al, 15);
     const pago = resumen < 0 && pagos.data.map((x) => x.mov).find((m) => m && !usados.has(m.id) &&
@@ -650,7 +676,6 @@ async function deudaTarjetas(ss) {
     const saldado = resumen >= 0 || pago || hoy > vto;
     if (!saldado) proximos.push(vto);
     if (doc.proximo_vencimiento) proximos.push(doc.proximo_vencimiento);
-    const extra = posteriores ? ` + ${s.cant_movimientos} mov. posteriores` : "";
     const estado = resumen >= 0 ? `Resumen al ${dm(s.confirmado_al)} sin deuda${extra}`
       : pago ? `Resumen al ${dm(s.confirmado_al)} pagado el ${dm(pago.fecha)}${extra}`
       : hoy > vto ? `Resumen al ${dm(s.confirmado_al)} vencido el ${dm(vto)}${doc.vencimiento ? "" : " (estimado)"}: se da por pagado${extra}`
@@ -666,7 +691,8 @@ async function deudaTarjetas(ss) {
 
 async function verHoy() {
   try {
-    const [ss, t] = await Promise.all([saldos(), tipoCambio()]);
+    const [ss, t, ctl] = await Promise.all([saldos(), tipoCambio(), sb.from("v_saldos_control").select("*")]);
+    if (ctl.error) throw ctl.error;
     const tarjetas = await deudaTarjetas(ss);
     const liq = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito");
     const tar = tarjetas.filas;
@@ -680,13 +706,21 @@ async function verHoy() {
       .order("fecha", { ascending: false }).order("id", { ascending: false }).limit(12);
 
     const filaSaldo = (s) => {
-      const estado = s.estado ?? (Number(s.cant_movimientos) > 0
-        ? `Estimado: confirmado al ${dm(s.confirmado_al)} + ${s.cant_movimientos} mov.`
-        : `Confirmado al ${dm(s.confirmado_al)}`);
+      const mas = Number(s.cant_movimientos) > 0 ? ` + ${s.cant_movimientos} mov.` : "";
+      const c = ctl.data.find((x) => x.cuenta_id === s.cuenta_id && x.moneda === s.moneda && x.informado_al === s.confirmado_al);
+      const sinExplicar = c && c.sin_explicar != null && Math.abs(c.sin_explicar) >= 1
+        ? ` · ${conMoneda(c.sin_explicar, s.moneda)} sin explicar desde el resumen del ${dm(c.resumen_al)}` : "";
+      const estado = s.estado ?? (
+        s.fuente === "informado" ? `Informado el ${dm(s.confirmado_al)}${mas}${sinExplicar}`
+        : s.fuente === "arqueo" ? `Arqueo del ${dm(s.confirmado_al)}${mas}`
+        : mas ? `Estimado: confirmado al ${dm(s.confirmado_al)}${mas}` : `Confirmado al ${dm(s.confirmado_al)}`);
       return `<tr><td>${esc(s.alias)}</td><td class="num ${s.saldo_estimado < 0 ? "menos" : ""}">${conMoneda(s.saldo_estimado, s.moneda)}</td><td class="tenue">${estado}</td></tr>`;
     };
 
     $("hoy-c").innerHTML = `
+      <div class="barra-filtros"><button class="sec" id="btnSaldos" type="button">Actualizar saldos</button>
+        <span class="tenue">Carga el saldo de hoy de cada cuenta desde su home banking</span></div>
+      <div id="formSaldos"></div>
       <div class="cifras">
         ${cifra("Disponible en pesos", pesos(dispARS), "Cuentas, billeteras y efectivo", "total")}
         ${cifra("Disponible en dólares", dolares(dispUSD))}
@@ -702,7 +736,44 @@ async function verHoy() {
             <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td></tr>`).join("")}
         </tbody></table></div></div>
       </div>`;
+    $("btnSaldos").onclick = () => formularioSaldos(ss, tar);
   } catch (e) { $("hoy-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// Saldos del día cargados a mano: pasan a ser el punto de partida de "Hoy" hasta el próximo resumen
+function formularioSaldos(ss, tar) {
+  const filas = [];
+  for (const c of ref.cuentas.filter((x) => x.activa && x.tipo !== "caja_efectivo")) {
+    const monedas = c.moneda === "BIMONEDA" ? ["ARS", "USD"] : [c.moneda];
+    for (const mon of monedas) {
+      const vivo = (c.tipo === "tarjeta_credito" ? tar : ss).find((s) => s.cuenta_id === c.id && s.moneda === mon);
+      filas.push({ c, mon, actual: vivo ? Number(vivo.saldo_estimado) : null });
+    }
+  }
+  $("formSaldos").innerHTML = `<div class="panel"><h3>Saldos de hoy (${dm(hoyISO())})</h3>
+    <p class="tenue" style="margin-top:0">Escribe solo los que quieras actualizar. En tarjetas, la deuda actual tal como figura en el home banking (en positivo).</p>
+    <div class="tabla" style="border:0"><table class="mini"><tbody>
+      ${filas.map((f, i) => `<tr><td>${esc(f.c.alias)}<div class="tenue">${f.c.tipo === "tarjeta_credito" ? "Deuda" : "Saldo"} en ${f.mon === "USD" ? "dólares" : "pesos"}</div></td>
+        <td class="num tenue">${f.actual == null ? "sin datos" : "Hoy figura " + conMoneda(f.c.tipo === "tarjeta_credito" ? -f.actual : f.actual, f.mon)}</td>
+        <td class="num"><input class="saldo-in" type="text" inputmode="decimal" data-i="${i}" aria-label="Saldo de ${esc(f.c.alias)} en ${f.mon}"></td></tr>`).join("")}
+    </tbody></table></div>
+    <div class="barra-filtros" style="margin:1rem 0 0"><button id="btnGuardarSaldos" type="button">Guardar saldos</button>
+      <button class="sec" id="btnCerrarSaldos" type="button">Cancelar</button><span id="msgSaldos" class="tenue"></span></div></div>`;
+  $("btnCerrarSaldos").onclick = () => ($("formSaldos").innerHTML = "");
+  $("btnGuardarSaldos").onclick = async () => {
+    const hoy = hoyISO(), filasOk = [];
+    for (const inp of $("formSaldos").querySelectorAll("input[data-i]")) {
+      if (!inp.value.trim()) continue;
+      const n = numeroAR(inp.value), f = filas[+inp.dataset.i];
+      if (n == null) return ($("msgSaldos").textContent = `No entiendo el importe de ${f.c.alias}.`);
+      filasOk.push({ cuenta_id: f.c.id, fecha: hoy, moneda: f.mon, fuente: "informado",
+                     saldo: f.c.tipo === "tarjeta_credito" ? -Math.abs(n) : n });
+    }
+    if (!filasOk.length) return ($("msgSaldos").textContent = "No cargaste ningún saldo.");
+    const { error } = await sb.from("saldos").upsert(filasOk, { onConflict: "cuenta_id,fecha,moneda" });
+    if (error) return ($("msgSaldos").textContent = error.message);
+    verHoy();
+  };
 }
 
 // ---------------- EL MES ----------------
@@ -931,6 +1002,91 @@ async function verPendientes() {
       tr.remove();
     });
   } catch (e) { $("pend-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// ---------------- EFECTIVO ----------------
+async function verEfectivo() {
+  try {
+    const cajas = ref.cuentas.filter((c) => c.tipo === "caja_efectivo" && c.activa);
+    if (!cajas.length) { $("efe-c").innerHTML = `<div class="msg info">No hay cajas de efectivo cargadas.</div>`; return; }
+    const ids = cajas.map((c) => c.id);
+    const [ss, arq, movs] = await Promise.all([
+      saldos(),
+      sb.from("arqueos").select("*").in("cuenta_id", ids).order("fecha", { ascending: false }).limit(10),
+      sb.from("movimientos").select("fecha, descripcion_original, monto, moneda, cuenta_id, rubro_id, persona_id")
+        .in("cuenta_id", ids).order("fecha", { ascending: false }).order("id", { ascending: false }).limit(20),
+    ]);
+    if (arq.error) throw arq.error;
+    if (movs.error) throw movs.error;
+    const personas = ref.personas.filter((x) => x.tipo !== "empresa");
+    const opcCajas = cajas.map((c) => `<option value="${c.id}">${esc(c.alias)}</option>`).join("");
+
+    $("efe-c").innerHTML = `
+      <div class="cifras">${cajas.map((c) => {
+        const s = ss.find((x) => x.cuenta_id === c.id), a = arq.data.find((x) => x.cuenta_id === c.id);
+        return cifra(esc(c.alias), s ? conMoneda(s.saldo_estimado, c.moneda) : "—",
+          s ? (a ? `Último arqueo ${dm(a.fecha)}${Number(a.diferencia) ? `, diferencia ${conMoneda(a.diferencia, c.moneda)}` : ", sin diferencia"}` : `Desde el ${dm(s.confirmado_al)}`)
+            : "Haz un arqueo para fijar el punto de partida", "total");
+      }).join("")}</div>
+      <div class="dos">
+        <div class="panel"><h3>Anotar un gasto o ingreso en efectivo</h3>
+          <div class="alterna" role="group" aria-label="Tipo"><button type="button" data-tipo="-1" class="activo">Gasto</button><button type="button" data-tipo="1">Ingreso</button></div>
+          <div class="form-grid">
+            <div><label for="efMonto">Monto</label><input id="efMonto" type="text" inputmode="decimal" autocomplete="off"></div>
+            <div><label for="efCaja">Caja</label><select id="efCaja">${opcCajas}</select></div>
+            <div><label for="efDesc">Qué fue</label><input id="efDesc" type="text" placeholder="Verdulería, propina, alquiler…"></div>
+            <div><label for="efRubro">Rubro</label><select id="efRubro">${opcionesRubro(null)}</select></div>
+            <div><label for="efQuien">Quién</label><select id="efQuien">${opciones(personas.filter((x) => x.tipo !== "grupo"), ref.personas.find((x) => x.tipo === "titular")?.id, "—")}</select></div>
+            <div><label for="efPara">Para quién</label><select id="efPara">${opciones(personas, null, "—")}</select></div>
+            <div><label for="efActivo">Activo</label><select id="efActivo">${opciones(ref.activos, null, "—")}</select></div>
+            <div><label for="efFecha">Fecha</label><input id="efFecha" type="date" value="${hoyISO()}"></div>
+            <div class="acciones"><button id="efGuardar" type="button">Anotar</button><span id="efMsg" class="tenue"></span></div>
+          </div></div>
+        <div class="panel"><h3>Arqueo</h3>
+          <p class="tenue" style="margin-top:0">Cuenta el efectivo de una caja. Si no coincide con lo esperado, la diferencia se registra como "Efectivo no identificado".</p>
+          <div class="form-grid">
+            <div><label for="arCaja">Caja</label><select id="arCaja">${opcCajas}</select></div>
+            <div><label for="arMonto">Monto contado</label><input id="arMonto" type="text" inputmode="decimal" autocomplete="off"></div>
+            <div><label for="arFecha">Fecha</label><input id="arFecha" type="date" value="${hoyISO()}"></div>
+            <div class="acciones"><button id="arGuardar" type="button">Registrar arqueo</button><span id="arMsg" class="tenue"></span></div>
+          </div></div>
+      </div>
+      <div class="panel"><h3>Últimos movimientos de efectivo</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
+        ${movs.data.map((m) => `<tr><td>${dm(m.fecha)}</td><td>${esc(m.descripcion_original)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${esc(rubroDe(m.rubro_id)?.nombre ?? "Sin clasificar")}, ${esc(nombrePersona(m.persona_id))}</div></td>
+          <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td></tr>`).join("") ||
+          `<tr><td class="tenue">Todavía no hay movimientos de efectivo.</td></tr>`}
+      </tbody></table></div></div>`;
+
+    let signo = -1;
+    $("efe-c").querySelectorAll("[data-tipo]").forEach((b) => b.onclick = () => {
+      signo = +b.dataset.tipo;
+      $("efe-c").querySelectorAll("[data-tipo]").forEach((x) => x.classList.toggle("activo", x === b));
+    });
+    $("efGuardar").onclick = async () => {
+      const n = numeroAR($("efMonto").value), caja = cuentaDe(+$("efCaja").value);
+      if (!n) return ($("efMsg").textContent = "Escribe el monto.");
+      if (!$("efRubro").value) return ($("efMsg").textContent = "Elige un rubro.");
+      const val = (id) => ($(id).value ? +$(id).value : null);
+      const { error } = await sb.from("movimientos").insert({
+        cuenta_id: caja.id, fecha: $("efFecha").value || hoyISO(), moneda: caja.moneda, monto: signo * Math.abs(n),
+        descripcion_original: $("efDesc").value.trim() || (signo < 0 ? "Gasto en efectivo" : "Ingreso en efectivo"),
+        rubro_id: val("efRubro"), persona_id: val("efQuien"), beneficiario_id: val("efPara"), activo_id: val("efActivo"),
+        origen: "manual", confianza: "confirmado", estado_conciliacion: "no_aplica", id_externo: "manual:" + crypto.randomUUID(),
+      });
+      if (error) return ($("efMsg").textContent = error.message);
+      verEfectivo();
+    };
+    $("arGuardar").onclick = async () => {
+      const n = numeroAR($("arMonto").value);
+      if (n == null) return ($("arMsg").textContent = "Escribe el monto contado.");
+      const caja = cuentaDe(+$("arCaja").value);
+      const { data, error } = await sb.rpc("registrar_arqueo", { p_cuenta: caja.id, p_fecha: $("arFecha").value || hoyISO(), p_contado: n });
+      if (error) return ($("arMsg").textContent = error.message);
+      await verEfectivo();
+      $("arMsg").textContent = Number(data.diferencia)
+        ? `Diferencia de ${conMoneda(data.diferencia, caja.moneda)} registrada como efectivo no identificado.` : "Coincide con lo esperado.";
+    };
+  } catch (e) { $("efe-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
 }
 
 // ---------------- RUBROS ----------------
