@@ -550,7 +550,8 @@ $("btnGuardar").onclick = async () => {
       `${esc(r.alias)}: ${r.insertados} movimientos guardados` +
       (r.duplicados ? `, ${r.duplicados} ya existían` : "") +
       (r.emparejadas ? `, ${r.emparejadas} transferencias emparejadas` : "") +
-      (r.absorbidos ? `, ${r.absorbidos} confirmaron avisos que habían llegado por mail` : "")).join("<br>");
+      (r.absorbidos ? `, ${r.absorbidos} confirmaron avisos que habían llegado por mail` : "") +
+      (r.sin_confirmar ? `, ${r.sin_confirmar} avisos por mail no aparecieron en el resumen (quedan en Pendientes)` : "")).join("<br>");
     estado = null;
     $("bloques").innerHTML = ""; $("pie").classList.add("oculto");
     mensaje("ok", "Resumen guardado.<br>" + txt);
@@ -851,11 +852,25 @@ async function verMes() {
 async function verViene() {
   try {
     const hoy = hoyISO(), fin = sumarDias(hoy, 60);
-    const [ss, fl] = await Promise.all([
+    const [ss, fl, cq] = await Promise.all([
       saldos(),
       sb.from("v_flujo_proyectado").select("*").gte("fecha", hoy).lte("fecha", fin).order("fecha"),
+      sb.from("movimientos").select("cuenta_id, fecha, descripcion_original, monto, moneda, cuota_nro, cuotas_total")
+        .not("cuotas_total", "is", null).gte("fecha", sumarDias(hoy, -75)).lt("monto", 0),
     ]);
     if (fl.error) throw fl.error;
+    if (cq.error) throw cq.error;
+    // Cuotas que terminan: del último resumen de cada tarjeta, en qué mes se paga la última cuota
+    const ultimo = {};
+    cq.data.forEach((m) => { if (!ultimo[m.cuenta_id] || m.fecha > ultimo[m.cuenta_id]) ultimo[m.cuenta_id] = m.fecha; });
+    const terminan = {};
+    cq.data.filter((m) => m.fecha === ultimo[m.cuenta_id] && m.cuotas_total > m.cuota_nro).forEach((m) => {
+      const d = new Date(m.fecha + "T12:00:00Z"); d.setUTCMonth(d.getUTCMonth() + (m.cuotas_total - m.cuota_nro));
+      const mes = d.toISOString().slice(0, 7);
+      (terminan[mes] ??= []).push(m);
+    });
+    const nombreMes = (ym) => new Date(ym + "-15T12:00:00Z").toLocaleDateString("es-AR", { month: "long", year: "numeric" });
+    const mesesFin = Object.keys(terminan).sort().slice(0, 12);
     const inicial = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito" && s.moneda === "ARS")
                       .reduce((a, s) => a + Number(s.saldo_estimado), 0);
     let saldo = inicial;
@@ -877,7 +892,15 @@ async function verViene() {
           <td class="num ${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</td><td class="num tenue">${pesos(f.saldo)}</td></tr>`).join("") ||
           `<tr><td class="tenue">No hay compromisos cargados en los próximos 60 días.</td></tr>`}
       </tbody></table></div>
-      <p class="tenue">Incluye hipoteca, alquiler, seguros y expensas cargados como compromisos, y el vencimiento de cada resumen de tarjeta importado. El del próximo resumen es estimado: por ahora solo suma las cuotas ya conocidas.</p></div>`;
+      <p class="tenue">Incluye hipoteca, alquiler, seguros y expensas cargados como compromisos, el vencimiento de cada resumen de tarjeta importado y las cuotas que quedan de cada compra en cuotas (estimado: los consumos nuevos se suman cuando cierra cada resumen).</p></div>
+      <div class="panel"><h3>Cuotas que terminan</h3><table class="mini"><tbody>
+        ${mesesFin.map((ym) => {
+          const ms = terminan[ym], porMon = (mon) => -ms.filter((m) => m.moneda === mon).reduce((a, m) => a + Number(m.monto), 0);
+          const libera = [porMon("ARS") ? pesos(porMon("ARS")) : "", porMon("USD") ? dolares(porMon("USD")) : ""].filter(Boolean).join(" + ");
+          return `<tr><td>Última cuota en el resumen de <strong>${nombreMes(ym)}</strong><div class="tenue">${ms.map((m) => esc(m.descripcion_original.replace(/\s*\(compra original.*\)/, ""))).join(", ")}</div></td>
+            <td class="num mas">Libera ${libera} por mes</td></tr>`;
+        }).join("") || `<tr><td class="tenue">No hay compras en cuotas en los últimos resúmenes.</td></tr>`}
+      </tbody></table></div>`;
 
     grafico("gViene", {
       type: "line",
@@ -948,16 +971,21 @@ async function verPendientes() {
   try {
     const sinId = ref.rubros.find((r) => r.nombre === "Sin identificar")?.id;
     const internos = ref.rubros.filter((r) => ["Transferencia interna", "Pago de tarjeta", "Movimiento de efectivo"].includes(r.nombre)).map((r) => r.id);
-    const [revisar, transito, internasPend, sinCuenta] = await Promise.all([
-      sb.from("movimientos").select("id, fecha, descripcion_original, monto, moneda, cuenta_id, rubro_id, confianza, origen")
+    const MOV = "id, fecha, monto, moneda, descripcion_original, cuenta_id";
+    const [revisar, transitoQ, internasPend, sinCuenta, paresQ] = await Promise.all([
+      sb.from("movimientos").select("id, fecha, descripcion_original, monto, moneda, cuenta_id, rubro_id, confianza, origen, notas")
         .or(`rubro_id.is.null,rubro_id.eq.${sinId},confianza.in.(sugerido,probable)`).order("fecha", { ascending: false }).limit(200),
-      sb.from("v_transferencias_en_transito").select("*").order("fecha"),
-      sb.from("movimientos").select("id, fecha, descripcion_original, monto, moneda, cuenta_id")
+      sb.from("transferencias_internas").select(`tipo, mov:movimientos!mov_salida_id(${MOV})`).is("mov_entrada_id", null),
+      sb.from("movimientos").select(MOV)
         .eq("estado_conciliacion", "pendiente").gt("monto", 0).in("rubro_id", internos).order("fecha"),
       sb.from("avisos").select("id, recibido, banco, datos").eq("estado", "sin_cuenta").order("recibido", { ascending: false }),
+      sb.from("transferencias_internas").select(`id, tipo, s:movimientos!mov_salida_id(${MOV}), e:movimientos!mov_entrada_id(${MOV})`)
+        .not("mov_entrada_id", "is", null).order("id", { ascending: false }).limit(15),
     ]);
-    const err = [revisar, transito, internasPend, sinCuenta].find((r) => r.error);
+    const err = [revisar, transitoQ, internasPend, sinCuenta, paresQ].find((r) => r.error);
     if (err) throw err.error;
+    const transito = { data: transitoQ.data.map((t) => t.mov).filter(Boolean).sort((a, b) => a.fecha.localeCompare(b.fecha)) };
+    const parte = (m) => `${dm(m.fecha)} ${esc(cuentaDe(m.cuenta_id)?.alias)} ${conMoneda(m.monto, m.moneda)}`;
 
     $("pend-c").innerHTML = `
       <div class="cifras">
@@ -967,10 +995,11 @@ async function verPendientes() {
       </div>
       <div class="panel"><h3>Para revisar</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
         ${revisar.data.map((m) => `<tr data-id="${m.id}"><td>${dm(m.fecha)}</td>
-          <td class="d">${esc(m.descripcion_original)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${m.rubro_id ? esc(rubroDe(m.rubro_id)?.nombre) + " (" + m.confianza + ")" : "Sin clasificar"}${m.origen === "mail" ? " · por mail, se confirma con el resumen" : ""}</div></td>
+          <td class="d">${esc(m.descripcion_original)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${m.rubro_id ? esc(rubroDe(m.rubro_id)?.nombre) + " (" + m.confianza + ")" : "Sin clasificar"}${m.origen === "mail" ? " · por mail, se confirma con el resumen" : ""}${m.notas ? `<br>${esc(m.notas)}` : ""}</div></td>
           <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td>
           <td><select aria-label="Rubro">${opcionesRubro(m.rubro_id)}</select></td>
-          <td><button class="sec" data-confirmar type="button">Confirmar</button></td></tr>`).join("") ||
+          <td style="white-space:nowrap"><button class="sec" data-confirmar type="button">Confirmar</button>
+            ${m.origen === "mail" ? `<button class="sec" data-borrar-mail type="button" title="Borra este movimiento si el aviso no corresponde">Descartar</button>` : ""}</td></tr>`).join("") ||
           `<tr><td class="tenue">No hay nada para revisar.</td></tr>`}
       </tbody></table></div></div>
       ${sinCuenta.data.length ? `<div class="panel"><h3>Avisos por mail sin cuenta</h3>
@@ -979,14 +1008,44 @@ async function verPendientes() {
           <td>${esc(a.datos.descripcion)}<div class="tenue">${esc(a.banco)}${a.datos.ultimos4 ? `, tarjeta terminada en ${esc(a.datos.ultimos4)}` : ""}${a.datos.titular ? ` (${esc(a.datos.titular)})` : ""}</div></td>
           <td class="num menos">${conMoneda(a.datos.monto, a.datos.moneda)}</td>
           <td><button class="sec" data-descartar type="button">Descartar</button></td></tr>`).join("")}</tbody></table></div>` : ""}
+      <p class="tenue">Para emparejar a mano, marca una salida y una entrada que sean la misma transferencia o pago, y presiona "Emparejar".</p>
       <div class="dos">
         <div class="panel"><h3>Salidas sin contraparte</h3><table class="mini"><tbody>
-          ${transito.data.map((t) => `<tr><td>${dm(t.fecha)}</td><td>${esc(t.desde)}<div class="tenue">${esc(t.descripcion_original)}</div></td><td class="num menos">${pesos(t.monto)}</td></tr>`).join("") || `<tr><td class="tenue">Todo emparejado.</td></tr>`}
+          ${transito.data.map((t) => `<tr><td><input type="radio" name="parS" value="${t.id}" aria-label="Elegir salida"></td><td>${dm(t.fecha)}</td><td>${esc(cuentaDe(t.cuenta_id)?.alias)}<div class="tenue">${esc(t.descripcion_original)}</div></td><td class="num menos">${conMoneda(t.monto, t.moneda)}</td></tr>`).join("") || `<tr><td class="tenue">Todo emparejado.</td></tr>`}
         </tbody></table></div>
         <div class="panel"><h3>Entradas sin contraparte</h3><table class="mini"><tbody>
-          ${internasPend.data.map((t) => `<tr><td>${dm(t.fecha)}</td><td>${esc(cuentaDe(t.cuenta_id)?.alias)}<div class="tenue">${esc(t.descripcion_original)}</div></td><td class="num mas">${conMoneda(t.monto, t.moneda)}</td></tr>`).join("") || `<tr><td class="tenue">Todo emparejado.</td></tr>`}
+          ${internasPend.data.map((t) => `<tr><td><input type="radio" name="parE" value="${t.id}" aria-label="Elegir entrada"></td><td>${dm(t.fecha)}</td><td>${esc(cuentaDe(t.cuenta_id)?.alias)}<div class="tenue">${esc(t.descripcion_original)}</div></td><td class="num mas">${conMoneda(t.monto, t.moneda)}</td></tr>`).join("") || `<tr><td class="tenue">Todo emparejado.</td></tr>`}
         </tbody></table></div>
-      </div>`;
+      </div>
+      <div class="barra-filtros"><button id="btnEmparejar" type="button">Emparejar</button><span id="msgPar" class="tenue"></span></div>
+      <div class="panel"><h3>Últimos emparejamientos</h3><table class="mini"><tbody>
+        ${paresQ.data.filter((x) => x.s && x.e).map((x) => `<tr data-s="${x.s.id}" data-e="${x.e.id}"><td>${parte(x.s)}<div class="tenue">${esc(x.s.descripcion_original)}</div></td>
+          <td>→ ${parte(x.e)}<div class="tenue">${esc(x.e.descripcion_original)}</div></td>
+          <td><button class="sec" data-desemparejar type="button">Desemparejar</button></td></tr>`).join("") || `<tr><td class="tenue">Todavía no hay emparejamientos.</td></tr>`}
+      </tbody></table></div>`;
+
+    $("btnEmparejar").onclick = async () => {
+      const s = document.querySelector("input[name=parS]:checked"), e = document.querySelector("input[name=parE]:checked");
+      if (!s || !e) return ($("msgPar").textContent = "Marca una salida y una entrada.");
+      const { error } = await sb.rpc("emparejar", { p_salida: +s.value, p_entrada: +e.value });
+      if (error) return ($("msgPar").textContent = error.message);
+      verPendientes();
+    };
+    $("pend-c").querySelectorAll("[data-desemparejar]").forEach((b) => b.onclick = async () => {
+      const tr = b.closest("tr");
+      if (!confirm("¿Desemparejar estos dos movimientos? Vuelven a quedar sin contraparte.")) return;
+      const { error } = await sb.rpc("desemparejar", { p_salida: +tr.dataset.s, p_entrada: +tr.dataset.e });
+      if (error) return alert(error.message);
+      verPendientes();
+    });
+    $("pend-c").querySelectorAll("[data-borrar-mail]").forEach((b) => b.onclick = async () => {
+      const tr = b.closest("tr");
+      if (!confirm("¿Descartar este movimiento que llegó por mail? Se borra y el aviso queda como descartado.")) return;
+      await sb.from("avisos").update({ estado: "descartado" }).eq("movimiento_id", +tr.dataset.id);
+      const { error } = await sb.from("movimientos").delete().eq("id", +tr.dataset.id).eq("origen", "mail");
+      if (error) return alert(error.message);
+      tr.remove();
+    });
 
     $("pend-c").querySelectorAll("[data-descartar]").forEach((b) => b.onclick = async () => {
       const tr = b.closest("tr");

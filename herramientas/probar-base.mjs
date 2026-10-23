@@ -109,3 +109,30 @@ console.log("S fuente tras el resumen:", (await db.query("select saldo, fuente f
 // T) Tipos de cambio
 console.log("T cotizaciones:", (await db.query(`select registrar_tipos_cambio('{"cotizaciones":[{"fecha":"2026-10-23","tipo":"mep","compra":1500,"venta":1510},{"fecha":"2026-10-23","tipo":"blue","venta":1530},{"fecha":"2026-10-23","tipo":"raro","venta":1}]}'::jsonb) as n`)).rows[0].n,
   (await db.query("select tipo, venta from tipos_cambio order by tipo")).rows);
+
+// G) Cuotas futuras como compromisos y avisos de mail que el resumen no confirmó
+await run(`delete from transferencias_internas; delete from movimientos; delete from saldos; delete from documentos; delete from compromisos;
+  insert into movimientos (cuenta_id, fecha, descripcion_original, monto, moneda, origen, confianza) values
+  (2, '2026-10-15', 'Aviso que no vino en el resumen', -777, 'ARS', 'mail', 'probable');`);
+const cuota = (desc, monto, nro, total, id) => ({ ...mov("2026-10-24", desc, monto, "ARS", id), cuota_nro: nro, cuotas_total: total });
+console.log("G resumen:", await guardar({ cuenta_id: 2, documento: { ...doc("resumen_tarjeta", "2026-09-26", "2026-10-24", "g1"),
+    tarjeta: { cierre: "2026-10-24", vencimiento: "2026-11-02", proximo_cierre: "2026-11-21", proximo_vencimiento: "2026-12-02" } },
+  conciliar: [{ moneda: "ARS", fecha_inicial: "2026-09-25", saldo_inicial: 0, fecha_final: "2026-10-24", saldo_final: -1800 }],
+  movimientos: [cuota("Heladera C.02/12", -1000, 2, 12, "c1"), cuota("Zapatillas C.03/03", -500, 3, 3, "c2"), cuota("Libros C.01/03", -300, 1, 3, "c3")] }));
+console.table((await db.query("select descripcion, monto, fecha_proxima from compromisos where activo order by fecha_proxima, id")).rows.slice(0, 5));
+console.log("G meses agendados:", (await db.query("select count(*)::int as n from compromisos where activo")).rows[0].n);
+console.log("G aviso sin confirmar:", (await db.query("select confianza, notas from movimientos where origen = 'mail'")).rows[0]);
+
+// H) Emparejado manual
+await run(`delete from transferencias_internas; delete from movimientos;
+  insert into movimientos (id, cuenta_id, fecha, descripcion_original, monto, moneda, rubro_id, origen, estado_conciliacion) overriding system value values
+  (901, 1, '2026-10-01', 'Transferencia a mi otra cuenta', -7000, 'ARS', ${R2 + 1}, 'resumen', 'pendiente'),
+  (902, 3, '2026-10-09', 'Ingreso (llegó tarde y con comisión)', 6950, 'ARS', ${R2 + 1}, 'resumen', 'pendiente');
+  insert into transferencias_internas (mov_salida_id, tipo) values (901, 'transferencia');`);
+await db.query("select emparejar(901, 902)");
+console.log("H emparejado:", (await db.query("select mov_salida_id, mov_entrada_id from transferencias_internas")).rows,
+  (await db.query("select id, estado_conciliacion from movimientos order by id")).rows.map((r) => r.id + ":" + r.estado_conciliacion).join(" "));
+await db.query("select desemparejar(901, 902)");
+console.log("H desemparejado:", (await db.query("select mov_salida_id, mov_entrada_id from transferencias_internas")).rows,
+  (await db.query("select id, estado_conciliacion from movimientos order by id")).rows.map((r) => r.id + ":" + r.estado_conciliacion).join(" "));
+try { await db.query("select emparejar(902, 901)"); } catch (e) { console.log("H al revés:", e.message); }
