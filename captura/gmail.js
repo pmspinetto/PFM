@@ -10,6 +10,8 @@
 //
 // Propiedades del script (Configuración del proyecto → Propiedades del script):
 //   SUPABASE_URL, SUPABASE_ANON_KEY, CAPTURA_EMAIL, CAPTURA_CLAVE
+//   REDIRECTORES (opcional): casillas propias que redirigen avisos con una regla de
+//   Outlook/Hotmail, separadas por coma
 // =====================================================================
 
 var ETIQUETAS = ["fo/registrado", "fo/sospechoso", "fo/error"];
@@ -42,7 +44,7 @@ function procesarAvisos() {
         var aviso = Avisos.leer({ de: msg.getFrom(), asunto: msg.getSubject(), html: msg.getBody(), recibido: msg.getDate() });
         if (!aviso) return;                       // publicidad u otro mail del banco
         avisos++;
-        if (!Avisos.autentico(msg.getRawContent())) {
+        if (!Avisos.autentico(msg.getRawContent(), { redirectores: (cfg.REDIRECTORES || "").split(",") })) {
           etiqueta = "fo/sospechoso";
           console.warn("No pasó la verificación: " + msg.getSubject() + " (" + msg.getFrom() + ")");
           return;

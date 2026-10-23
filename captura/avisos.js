@@ -11,9 +11,12 @@
 // tipo: consumo_tarjeta | transferencia_enviada | transferencia_recibida
 // Signos como en movimientos: positivo entra, negativo sale.
 //
-// Avisos.autentico(crudo, dominios) verifica con los encabezados que agrega
-// el servidor que recibió el mail (el primero de arriba) que el remitente
-// pasó DMARC, o la cadena ARC si el mail llegó redirigido.
+// Avisos.autentico(crudo, { dominios, redirectores }) verifica con los encabezados
+// que agrega el servidor que recibió el mail (el primero de arriba) que el remitente
+// pasó DMARC o la cadena ARC. Si el aviso llegó redirigido por una regla de Hotmail/
+// Outlook (que rompe la firma del banco), exige que Gmail haya verificado que lo
+// envió una de las casillas de `redirectores` y que Microsoft, al recibirlo en esa
+// casilla, haya registrado DMARC aprobado para el dominio del banco.
 // =====================================================================
 
 var Avisos = (function () {
@@ -115,14 +118,25 @@ var Avisos = (function () {
     });
   }
 
-  function autentico(crudo, dominios) {
-    dominios = dominios || DOMINIOS;
-    var ar = encabezados(crudo).filter(function (h) { return h.nombre === "authentication-results"; })[0];
-    if (!ar) return false;
-    var v = ar.valor.toLowerCase();
+  function autentico(crudo, opciones) {
+    opciones = opciones || {};
+    var dominios = opciones.dominios || DOMINIOS;
+    var redirectores = (opciones.redirectores || []).map(function (x) { return String(x).trim().toLowerCase(); }).filter(Boolean);
+    var resultados = encabezados(crudo).filter(function (h) { return h.nombre === "authentication-results"; });
+    if (!resultados.length) return false;
+    var v = resultados[0].valor.toLowerCase();
     var permitido = function (d) { return !!d && dominios.some(function (x) { return d === x || d.slice(-(x.length + 1)) === "." + x; }); };
     var dmarc = v.match(/dmarc=pass[^;]*?header\.from=([a-z0-9.-]+)/);
     if (dmarc && permitido(dmarc[1])) return true;
+
+    // Redirigido por una regla de Outlook desde una casilla propia
+    var origen = v.match(/spf=pass[^;]*?smtp\.mailfrom=([^\s;]+)/);
+    var firmaMs = /dkim=pass[^;]*?header\.i=@(hotmail|outlook|live)\.com/.test(v);
+    if (origen && firmaMs && redirectores.indexOf(origen[1]) >= 0 && resultados[1]) {
+      var ms = resultados[1].valor.toLowerCase();
+      var dm = ms.match(/^mx\.microsoft\.com\b[\s\S]*?dmarc=pass[^;]*?header\.from=([a-z0-9.-]+)/);
+      if (dm && permitido(dm[1])) return true;
+    }
     var arc = v.match(/arc=pass\s*\(([^)]*)\)/);
     if (arc) {
       var dk = arc[1].match(/dkim=pass\s+dkdomain=([a-z0-9.-]+)/);
