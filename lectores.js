@@ -247,7 +247,7 @@ function santanderVisa(paginas) {
         for (const it of montos) {
           const m = monto(it.s);
           movs.push({ fecha: fechaActual, descripcion: desc, monto: -m.v, moneda: m.moneda,
-                      tipo_cambio: m.moneda === "USD" && tc ? Number(tc[1].replace(",", ".")) : null,
+                      tipo_cambio: m.moneda === "USD" && tc ? Number(tc[1].replace(/\.(?=\d{3}(\D|$))/g, "").replace(",", ".")) : null,
                       comprobante: null, cuota_nro: null, cuotas_total: null, ultimos4: null });
         }
       }

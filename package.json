@@ -4,9 +4,11 @@
   "type": "module",
   "scripts": {
     "probar": "node herramientas/probar-lectores.mjs",
-    "probar-avisos": "node herramientas/probar-avisos.mjs"
+    "probar-avisos": "node herramientas/probar-avisos.mjs",
+    "probar-base": "node herramientas/probar-base.mjs"
   },
   "devDependencies": {
-    "pdfjs-dist": "4.10.38"
+    "pdfjs-dist": "4.10.38",
+    "@electric-sql/pglite": "0.5.8"
   }
 }
