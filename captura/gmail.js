@@ -28,7 +28,8 @@ function procesarAvisos() {
   var desdeFecha = new Date(ultimo.getTime() - 3600000);
   var dias = Math.max(1, Math.ceil((Date.now() - desdeFecha.getTime()) / 86400000));
   var remitentes = Avisos.DOMINIOS.map(function (d) { return "from:" + d; }).join(" OR ");
-  var hilos = GmailApp.search("(" + remitentes + ") newer_than:" + dias + "d", 0, 100);
+  // in:anywhere incluye Spam (los avisos redirigidos desde Hotmail a veces caen ahí); se excluye la papelera
+  var hilos = GmailApp.search("in:anywhere -in:trash (" + remitentes + ") newer_than:" + dias + "d", 0, 100);
 
   var token = null, nuevoUltimo = ultimo, primerError = null, revisados = 0, avisos = 0;
   hilos.forEach(function (hilo) {
