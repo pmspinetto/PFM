@@ -151,3 +151,22 @@ await run(`insert into activos (nombre, tipo, subtipo, moneda, capital, tna, fec
   values ('Plazo fijo de prueba', 'inversion', 'plazo_fijo', 'ARS', 1000000, 30, '2026-10-01', '2026-10-31')`);
 console.log("P inversión:", (await db.query("select subtipo, capital, tna from activos where nombre = 'Plazo fijo de prueba'")).rows[0],
   "| uva:", (await db.query(`select registrar_tipos_cambio('{"cotizaciones":[{"fecha":"2026-10-25","tipo":"uva","venta":2150.5}]}'::jsonb) as n`)).rows[0].n);
+
+// AL) Alertas: gasto grande, vencimiento, liquidez, recurrentes; se envía cada una una sola vez
+await run(`delete from transferencias_internas; delete from movimientos; delete from compromisos; delete from documentos; delete from saldos;
+  insert into tipos_cambio (fecha, tipo, venta) values (current_date, 'mep', 1500) on conflict do nothing;
+  insert into saldos (cuenta_id, fecha, moneda, saldo, fuente) values (1, current_date - 1, 'ARS', 100000, 'informado');
+  insert into movimientos (cuenta_id, fecha, descripcion_original, monto, moneda, origen) values
+    (2, current_date, 'TELEVISOR', -450000, 'ARS', 'mail'), (2, current_date, 'CAFE', -3000, 'ARS', 'mail'),
+    (2, current_date, 'PASAJE EN DOLARES', -250, 'USD', 'mail');
+  insert into rubros (nombre, padre_id, tipo) select 'Colegio', id, 'gasto' from rubros where nombre = 'Varios';
+  insert into compromisos (descripcion, tipo, rubro_id, monto, moneda, frecuencia, fecha_proxima) values
+    ('Cuota colegio', 'educacion', (select id from rubros where nombre = 'Colegio'), -200000, 'ARS', 'mensual', date_trunc('month', current_date - interval '2 month')::date + 9),
+    ('Seguro', 'seguro', null, -50000, 'ARS', 'unica', current_date + 2);
+  insert into documentos (cuenta_id, tipo, periodo_hasta, hash) values (1, 'resumen_cuenta', date_trunc('month', current_date)::date - 1, 'cubre-mes-anterior');
+  insert into movimientos (cuenta_id, fecha, descripcion_original, monto, moneda, rubro_id, origen) values
+    (1, date_trunc('month', current_date - interval '1 month')::date + 10, 'COLEGIO', -205000, 'ARS', (select id from rubros where nombre = 'Colegio'), 'resumen'),
+    (1, date_trunc('month', current_date - interval '1 month')::date + 12, 'COLEGIO', -205000, 'ARS', (select id from rubros where nombre = 'Colegio'), 'resumen');`);
+console.table((await db.query("select tipo, titulo, monto from alertas_calcular()")).rows);
+console.log("AL primer envío:", (await db.query("select count(*)::int as n from alertas_por_enviar()")).rows[0].n,
+  "| segundo envío:", (await db.query("select count(*)::int as n from alertas_por_enviar()")).rows[0].n);

@@ -704,8 +704,9 @@ async function deudaTarjetas(ss) {
 
 async function verHoy() {
   try {
-    const [ss, t, ctl] = await Promise.all([saldos(), tipoCambio(), sb.from("v_saldos_control").select("*")]);
+    const [ss, t, ctl, al] = await Promise.all([saldos(), tipoCambio(), sb.from("v_saldos_control").select("*"), sb.rpc("alertas_calcular")]);
     if (ctl.error) throw ctl.error;
+    const alertas = al.error ? [] : al.data;
     const tarjetas = await deudaTarjetas(ss);
     const liq = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito");
     const tar = tarjetas.filas;
@@ -732,8 +733,11 @@ async function verHoy() {
 
     $("hoy-c").innerHTML = `
       <div class="barra-filtros"><button class="sec" id="btnSaldos" type="button">Actualizar saldos</button>
-        <span class="tenue">Carga el saldo de hoy de cada cuenta desde su home banking</span></div>
+        <span class="tenue">Carga el saldo de hoy de cada cuenta desde su home banking</span>
+        <button class="sec" id="btnAlertas" type="button" style="margin-left:auto">Configurar alertas</button></div>
       <div id="formSaldos"></div>
+      ${alertas.length ? `<div class="msg info"><strong>Alertas (${alertas.length})</strong>
+        <ul style="margin:.4rem 0 0;padding-left:1.2rem">${alertas.map((a) => `<li>${esc(a.titulo)}${a.monto != null && a.tipo !== "saldo_insuficiente" ? ` · ${conMoneda(Math.abs(a.monto), a.moneda)}` : ""}${a.detalle ? ` <span class="tenue">(${esc(a.detalle)})</span>` : ""}</li>`).join("")}</ul></div>` : ""}
       <div class="cifras">
         ${cifra("Disponible en pesos", pesos(dispARS), "Cuentas, billeteras y efectivo", "total")}
         ${cifra("Disponible en dólares", dolares(dispUSD))}
@@ -750,7 +754,30 @@ async function verHoy() {
         </tbody></table></div></div>
       </div>`;
     $("btnSaldos").onclick = () => formularioSaldos(ss, tar);
+    $("btnAlertas").onclick = configurarAlertas;
   } catch (e) { $("hoy-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// Umbrales de las alertas (también llegan por mail desde el script de Gmail)
+async function configurarAlertas() {
+  const { data: c, error } = await sb.from("config_alertas").select("*").eq("id", 1).single();
+  if (error) return alert(error.message);
+  $("formSaldos").innerHTML = `<div class="panel"><h3>Alertas</h3>
+    <p class="tenue" style="margin-top:0">Avisan de gastos grandes, vencimientos cercanos, liquidez que no alcanza para los próximos 7 días y pagos mensuales duplicados o faltantes del mes anterior (cuando ya importaste un resumen que lo cubre). Se ven acá y llegan por mail una sola vez.</p>
+    <div class="form-grid">
+      <div><label for="alGasto">Gasto grande desde ($)</label><input id="alGasto" type="text" inputmode="decimal" value="${fmt0.format(c.gasto_grande)}"></div>
+      <div><label for="alDias">Avisar vencimientos con días de anticipación</label><input id="alDias" type="text" inputmode="numeric" value="${c.dias_vencimiento}"></div>
+      <div><label class="filtro" style="margin-top:2rem"><input id="alActivas" type="checkbox" ${c.activas ? "checked" : ""}> Alertas activadas</label></div>
+      <div class="acciones"><button id="alGuardar" type="button">Guardar</button><button class="sec" id="alCerrar" type="button">Cerrar</button><span id="alMsg" class="tenue"></span></div>
+    </div></div>`;
+  $("alCerrar").onclick = () => ($("formSaldos").innerHTML = "");
+  $("alGuardar").onclick = async () => {
+    const gasto = numeroAR($("alGasto").value), dias = parseInt($("alDias").value, 10);
+    if (!gasto || !(dias >= 0)) return ($("alMsg").textContent = "Revisa los valores.");
+    const { error: e } = await sb.from("config_alertas").update({ gasto_grande: gasto, dias_vencimiento: dias, activas: $("alActivas").checked }).eq("id", 1);
+    if (e) return ($("alMsg").textContent = e.message);
+    verHoy();
+  };
 }
 
 // Saldos del día cargados a mano: pasan a ser el punto de partida de "Hoy" hasta el próximo resumen

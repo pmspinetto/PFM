@@ -12,6 +12,8 @@
 //   SUPABASE_URL, SUPABASE_ANON_KEY, CAPTURA_EMAIL, CAPTURA_CLAVE
 //   REDIRECTORES (opcional): casillas propias que redirigen avisos con una regla de
 //   Outlook/Hotmail, separadas por coma
+// Si se configura AVISAR_A (mail donde recibir alertas), manda por mail las alertas nuevas de
+// Family Office (gasto grande, vencimientos, liquidez, pagos duplicados o faltantes).
 // Además, una vez por día registra el dólar (oficial, MEP, blue y tarjeta) de dolarapi.com
 // y el valor UVA del BCRA;
 // esa llamada diaria también mantiene activo el proyecto gratuito de Supabase.
@@ -75,6 +77,11 @@ function procesarAvisos() {
   } catch (e) {
     console.error("Dólar: " + e.message);
   }
+  try {
+    if (cfg.AVISAR_A) enviarAlertas(cfg, function () { return (token = token || ingresar(cfg)); });
+  } catch (e) {
+    console.error("Alertas: " + e.message);
+  }
   // Si algo falló, la próxima vez se vuelve a intentar desde ese mail
   props.setProperty("ULTIMO", (primerError ? new Date(primerError.getTime() - 1000) : nuevoUltimo).toISOString());
 }
@@ -108,6 +115,27 @@ function actualizarDolar(cfg, props, obtenerToken, forzar) {
   var n = llamar(cfg, obtenerToken(), "rpc/registrar_tipos_cambio", { p: { cotizaciones: cotizaciones } });
   props.setProperty("DOLAR_DIA", hoy);
   console.log("Cotizaciones registradas hoy (dólar y UVA): " + n);
+}
+
+// Alertas nuevas por mail (cada alerta se manda una sola vez)
+function enviarAlertas(cfg, obtenerToken) {
+  var alertas = llamar(cfg, obtenerToken(), "rpc/alertas_por_enviar", {}) || [];
+  if (!alertas.length) return;
+  var plata = function (a) {
+    if (a.monto == null || a.tipo === "saldo_insuficiente") return "";
+    var n = Math.abs(Number(a.monto)).toLocaleString("es-AR", { maximumFractionDigits: 0 });
+    return " · " + (a.moneda === "USD" ? "US$ " : "$ ") + n;
+  };
+  var html = "<p>Family Office tiene " + alertas.length + (alertas.length === 1 ? " alerta nueva" : " alertas nuevas") + ":</p><ul>" +
+    alertas.map(function (a) {
+      return "<li>" + escaparHtml(a.titulo) + plata(a) + (a.detalle ? " <i>(" + escaparHtml(a.detalle) + ")</i>" : "") + "</li>";
+    }).join("") + "</ul><p><a href=\"https://pmspinetto.github.io/PFM/\">Abrir Family Office</a></p>";
+  MailApp.sendEmail({ to: cfg.AVISAR_A, subject: "Family Office: " + alertas.length + (alertas.length === 1 ? " alerta" : " alertas"), htmlBody: html });
+  console.log("Alertas enviadas por mail: " + alertas.length);
+}
+
+function escaparHtml(t) {
+  return String(t == null ? "" : t).replace(/[&<>"]/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]; });
 }
 
 // Ejecutar a mano para probar: registra el dólar del día sin esperar a las 18 h
