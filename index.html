@@ -1003,56 +1003,227 @@ async function verViene() {
 }
 
 // ---------------- PATRIMONIO ----------------
+const SUBTIPOS = { plazo_fijo: "Plazo fijo", fci: "Fondo común de inversión", acciones: "Acciones", bonos: "Bonos",
+                   cedear: "CEDEAR", cripto: "Cripto", dolares: "Dólares billete", otro: "Otra inversión" };
+const diasEntre = (a, b) => Math.round((new Date(b + "T12:00:00Z") - new Date(a + "T12:00:00Z")) / 86400000);
+// Plazo fijo: capital + interés simple devengado hasta hoy (o hasta el vencimiento)
+const devengado = (a, hasta) => Number(a.capital) * (1 + (Number(a.tna) / 100) * Math.max(0, diasEntre(a.fecha_inicio, hasta)) / 365);
+
 async function verPatrimonio() {
   try {
-    const [ss, t, va, pr] = await Promise.all([
+    const hoy = hoyISO(), hace12 = sumarDias(hoy, -365);
+    const [ss, t, va, pr, act, lin, uvaQ] = await Promise.all([
       saldos(), tipoCambio(),
-      sb.from("valuaciones").select("*, activos(nombre, tipo)").order("fecha", { ascending: false }),
+      sb.from("valuaciones").select("*").order("fecha", { ascending: false }),
       sb.from("prestamos").select("*, activos(nombre)"),
+      sb.from("activos").select("*").order("nombre"),
+      sb.from("v_lineas").select("*").gte("fecha", hace12),
+      sb.from("tipos_cambio").select("fecha, venta").eq("tipo", "uva").order("fecha", { ascending: false }).limit(1),
     ]);
+    const err = [va, pr, act, lin, uvaQ].find((x) => x.error);
+    if (err) throw err.error;
     const v = t?.valor;
     const usd = (n, mon) => (mon === "USD" ? Number(n) : v ? Number(n) / v : 0);
     const liq = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito").reduce((a, s) => a + usd(s.saldo_estimado, s.moneda), 0);
     const tar = (await deudaTarjetas(ss)).filas.reduce((a, s) => a + usd(s.deuda_neta, s.moneda), 0);
-    const ultimas = {};
-    (va.data || []).forEach((x) => { if (!ultimas[x.activo_id]) ultimas[x.activo_id] = x; });
-    const activos = Object.values(ultimas).map((x) => ({ nombre: x.activos.nombre, usd: usd(x.valor, x.moneda), x }));
+
+    // Valor de cada activo: su última valuación (un plazo fijo suma el interés devengado)
+    const vals = {};
+    va.data.forEach((x) => (vals[x.activo_id] ??= []).push(x));
+    const activos = act.data.map((a) => {
+      const hist = vals[a.id] ?? [], ult = hist[0], prim = hist[hist.length - 1];
+      let valor = ult ? Number(ult.valor) : null, moneda = ult?.moneda ?? a.moneda ?? "USD", estimado = false;
+      if (a.subtipo === "plazo_fijo" && a.capital && a.tna && a.fecha_inicio && (!ult || ult.fecha <= a.fecha_inicio)) {
+        valor = devengado(a, a.fecha_vencimiento && a.fecha_vencimiento < hoy ? a.fecha_vencimiento : hoy);
+        moneda = a.moneda ?? "ARS"; estimado = true;
+      }
+      return { ...a, ult, prim, valor, moneda, estimado, usd: valor == null ? 0 : usd(valor, moneda) };
+    });
     const deudas = (pr.data || []).map((p) => ({ nombre: p.nombre, usd: -usd(p.saldo_capital, p.moneda), p }));
-    const totAct = activos.reduce((a, x) => a + x.usd, 0), totDeu = deudas.reduce((a, x) => a + x.usd, 0);
+    const bienes = activos.filter((a) => a.valor != null);
+    const totAct = bienes.reduce((a, x) => a + x.usd, 0), totDeu = deudas.reduce((a, x) => a + x.usd, 0);
     const neto = liq + tar + totAct + totDeu;
+
+    // Fichas: ingresos, gastos y amortización de cada inmueble o vehículo en los últimos 12 meses
+    const ficha = (a) => {
+      const ls = lin.data.filter((l) => l.activo_id === a.id);
+      const meses = Math.max(1, new Set(ls.map((l) => l.fecha.slice(0, 7))).size);
+      let ingresos = 0, gastos = 0, amort = 0;
+      for (const l of ls) {
+        const tipo = rubroDe(l.rubro_id)?.tipo, val = Number(l.monto_ars ?? 0);
+        if (tipo === "ingreso") ingresos += val; else if (tipo === "gasto") gastos += -val; else if (tipo === "ahorro") amort += -val;
+      }
+      const f = 12 / meses, deuda = -deudas.filter((d) => d.p.activo_id === a.id).reduce((x, d) => x + d.usd, 0);
+      const resultado = ingresos - gastos, pct = (n, base) => (base > 0 ? (usd(n * f, "ARS") / base * 100).toFixed(1) + "%" : "—");
+      const filas = [["Ingresos", pesos(ingresos)], ["Gastos (intereses, seguros, impuestos, mantenimiento)", pesos(-gastos)],
+                     ["Resultado económico", pesos(resultado)], ["Amortización de capital", pesos(-amort)], ["Neto en caja", pesos(resultado - amort)]];
+      const rent = ingresos > 0 ? [["Rentabilidad bruta anual sobre el valor", pct(ingresos, a.usd)], ["Rentabilidad neta anual sobre el valor", pct(resultado, a.usd)],
+                                   ["Rentabilidad sobre el patrimonio neto invertido", pct(resultado, a.usd - deuda)]]
+                                : [["Costo mensual promedio", pesos(gastos / meses)], ["Costo anual estimado", pesos(gastos * f)]];
+      return `<div class="panel"><h3>${esc(a.nombre)}</h3>
+        <div class="tenue">Valor ${a.valor == null ? "sin valuación" : dolares(a.usd)}${deuda ? `, deuda ${dolares(deuda)}, neto ${dolares(a.usd - deuda)}` : ""} · ${ls.length ? `${meses} ${meses === 1 ? "mes" : "meses"} de datos${meses < 12 ? " (anualizado)" : ""}` : "sin movimientos asignados a este activo"}</div>
+        <table class="mini"><tbody>${[...filas, ...rent].map(([k, x]) => `<tr><td>${k}</td><td class="num">${x}</td></tr>`).join("")}</tbody></table></div>`;
+    };
+    const fichas = activos.filter((a) => a.tipo === "inmueble" || a.tipo === "vehiculo");
+
+    // Inversiones: rendimiento desde la primera valuación, descontando los aportes registrados
+    const inversiones = activos.filter((a) => a.tipo === "inversion");
+    const rinde = (a) => {
+      if (a.valor == null) return "—";
+      const base = a.subtipo === "plazo_fijo" && a.capital ? Number(a.capital) : a.prim ? Number(a.prim.valor) : null;
+      const desde = a.subtipo === "plazo_fijo" ? a.fecha_inicio : a.prim?.fecha;
+      if (!base || !desde) return "—";
+      const aportesArs = -lin.data.filter((l) => l.activo_id === a.id && l.fecha > desde && rubroDe(l.rubro_id)?.tipo === "ahorro")
+        .reduce((x, l) => x + Number(l.monto_ars ?? 0), 0);
+      const aportes = a.moneda === "USD" ? usd(aportesArs, "ARS") : aportesArs;
+      const r = (a.valor - base - aportes) / (base + aportes) * 100;
+      return `${r >= 0 ? "+" : ""}${r.toFixed(1)}% desde ${dm(desde)}${aportes ? `, con aportes de ${conMoneda(aportes, a.moneda)}` : ""}`;
+    };
+    const totInv = inversiones.reduce((x, a) => x + a.usd, 0);
+    const prestUva = (pr.data || []).filter((p) => p.indexacion === "uva");
+    const uva = uvaQ.data[0];
 
     $("pat-c").innerHTML = `
       <div class="barra-filtros">
         <label for="tcIn" style="margin:0">Dólar de referencia (MEP)</label>
         <input id="tcIn" type="text" inputmode="decimal" value="${v ?? ""}" style="width:8rem">
         <button class="sec" id="tcBtn" type="button">Actualizar dólar</button>
-        <span class="tenue">${t ? `Último: ${t.tipo} del ${dm(t.fecha)}` : "Todavía no hay dólar cargado"}</span>
+        <span class="tenue">${t ? `Último: ${t.tipo} del ${dm(t.fecha)}` : "Todavía no hay dólar cargado"}${uva ? ` · UVA ${fmt.format(uva.venta)} del ${dm(uva.fecha)}` : ""}</span>
       </div>
       <div class="cifras">
         ${cifra("Patrimonio neto", dolares(neto), "Activos + liquidez − deudas", "total")}
         ${cifra("Liquidez", dolares(liq))}
-        ${cifra("Bienes", dolares(totAct))}
+        ${cifra("Bienes e inversiones", dolares(totAct), totInv ? `Inversiones ${dolares(totInv)}` : "")}
         ${cifra("Deudas", dolares(totDeu + tar), "Préstamos y tarjetas")}
       </div>
       <div class="dos">
-        <div class="panel"><h3>Bienes</h3><table class="mini"><tbody>
-          ${activos.map((a) => `<tr><td>${esc(a.nombre)}<div class="tenue">${esc(a.x.fuente)}, ${dm(a.x.fecha)}${a.x.valor_min != a.x.valor_max ? ` (rango ${dolares(a.x.valor_min)} a ${dolares(a.x.valor_max)})` : ""}</div></td><td class="num">${dolares(a.usd)}</td></tr>`).join("")}
+        <div class="panel"><h3>Bienes e inversiones</h3><table class="mini"><tbody>
+          ${bienes.map((a) => `<tr><td>${esc(a.nombre)}<div class="tenue">${a.estimado ? "Estimado con el interés devengado" : `${esc(a.ult.fuente)}, ${dm(a.ult.fecha)}${a.ult.valor_min != a.ult.valor_max ? ` (rango ${conMoneda(a.ult.valor_min, a.ult.moneda)} a ${conMoneda(a.ult.valor_max, a.ult.moneda)})` : ""}`}</div></td><td class="num">${dolares(a.usd)}</td></tr>`).join("")}
           <tr><td>Liquidez (cuentas y efectivo)</td><td class="num">${dolares(liq)}</td></tr>
         </tbody></table></div>
         <div class="panel"><h3>Deudas</h3><table class="mini"><tbody>
           ${deudas.map((d) => `<tr><td>${esc(d.nombre)}<div class="tenue">Cuota ${d.p.cuota_actual} de ${d.p.cuotas_total}, saldo ${pesos(d.p.saldo_capital)} al ${dm(d.p.saldo_fecha)}${d.p.indexacion === "uva" ? ", ajusta por UVA" : ""}</div></td><td class="num menos">${dolares(d.usd)}</td></tr>`).join("")}
           <tr><td>Tarjetas de crédito</td><td class="num menos">${dolares(tar)}</td></tr>
         </tbody></table></div>
-      </div>`;
+      </div>
+
+      <h3>Fichas</h3>
+      <p class="tenue" style="margin-top:0">Últimos 12 meses de movimientos asignados a cada activo. El resultado económico no incluye la amortización de capital (es ahorro); el neto en caja sí.</p>
+      <div class="dos">${fichas.map(ficha).join("") || `<div class="tenue">No hay inmuebles ni vehículos cargados.</div>`}</div>
+
+      <div class="panel"><h3>Inversiones</h3>
+        <table class="mini"><tbody>
+          ${inversiones.map((a) => `<tr data-activo="${a.id}"><td>${esc(a.nombre)}<div class="tenue">${esc(SUBTIPOS[a.subtipo] ?? "Inversión")}${a.fecha_vencimiento ? `, vence ${dm(a.fecha_vencimiento)}` : ""}${a.tna ? `, TNA ${a.tna}%` : ""}</div></td>
+            <td class="num">${a.valor == null ? "—" : conMoneda(a.valor, a.moneda)}<div class="tenue">${rinde(a)}</div></td>
+            <td><button class="sec" data-valuar="${a.id}" type="button">Actualizar valor</button></td></tr>`).join("") || `<tr><td class="tenue">Todavía no cargaste inversiones.</td></tr>`}
+        </tbody></table>
+        <details style="margin-top:.75rem"><summary>Agregar una inversión</summary>
+          <div class="form-grid">
+            <div><label for="invNombre">Nombre</label><input id="invNombre" type="text" placeholder="Plazo fijo Banco X, FCI Ahorro…"></div>
+            <div><label for="invTipo">Tipo</label><select id="invTipo">${Object.entries(SUBTIPOS).map(([k, x]) => `<option value="${k}">${x}</option>`).join("")}</select></div>
+            <div><label for="invMoneda">Moneda</label><select id="invMoneda"><option value="ARS">Pesos</option><option value="USD">Dólares</option></select></div>
+            <div><label for="invMonto">Valor actual (o capital)</label><input id="invMonto" type="text" inputmode="decimal"></div>
+            <div class="pf"><label for="invTna">TNA %</label><input id="invTna" type="text" inputmode="decimal"></div>
+            <div class="pf"><label for="invIni">Constituido el</label><input id="invIni" type="date" value="${hoy}"></div>
+            <div class="pf"><label for="invVto">Vence el</label><input id="invVto" type="date"></div>
+            <div class="acciones"><button id="invGuardar" type="button">Agregar</button><span id="invMsg" class="tenue"></span></div>
+          </div></details>
+      </div>
+
+      <div class="panel"><h3>Actualizar la valuación de un bien</h3>
+        <div class="form-grid">
+          <div><label for="valActivo">Bien</label><select id="valActivo">${opciones(activos, null, "Elegir")}</select></div>
+          <div><label for="valMin">Valor mínimo</label><input id="valMin" type="text" inputmode="decimal"></div>
+          <div><label for="valMax">Valor máximo (opcional)</label><input id="valMax" type="text" inputmode="decimal"></div>
+          <div><label for="valMoneda">Moneda</label><select id="valMoneda"><option value="USD">Dólares</option><option value="ARS">Pesos</option></select></div>
+          <div><label for="valFuente">Fuente</label><input id="valFuente" type="text" value="estimación propia"></div>
+          <div class="acciones"><button id="valGuardar" type="button">Guardar valuación</button><span id="valMsg" class="tenue"></span></div>
+        </div></div>
+
+      ${prestUva.length ? `<div class="panel"><h3>Calculadora de precancelación UVA</h3>
+        <p class="tenue" style="margin-top:0">Muestra qué pasa si adelantas capital. Es información para decidir, no una recomendación.</p>
+        <div class="form-grid">
+          <div><label for="uvaPrest">Préstamo</label><select id="uvaPrest">${prestUva.map((p) => `<option value="${p.id}">${esc(p.nombre)}</option>`).join("")}</select></div>
+          <div><label for="uvaMonto">Monto a precancelar (pesos)</label><input id="uvaMonto" type="text" inputmode="decimal"></div>
+          <div><label for="uvaTna">TNA del préstamo %</label><input id="uvaTna" type="text" inputmode="decimal"></div>
+          <div class="acciones"><button id="uvaCalc" type="button">Calcular</button></div>
+        </div><div id="uvaRes"></div></div>` : ""}`;
 
     $("tcBtn").onclick = async () => {
-      const n = Number(String($("tcIn").value).replace(/\./g, "").replace(",", "."));
+      const n = numeroAR($("tcIn").value);
       if (!n) return;
       const { error } = await sb.from("tipos_cambio").upsert({ fecha: hoyISO(), tipo: "mep", venta: n });
       if (error) return alert(error.message);
       verPatrimonio();
     };
+    const mostrarPf = () => $("pat-c").querySelectorAll(".pf").forEach((x) => x.classList.toggle("oculto", $("invTipo").value !== "plazo_fijo"));
+    $("invTipo").onchange = mostrarPf; mostrarPf();
+    $("invGuardar").onclick = async () => {
+      const nombre = $("invNombre").value.trim(), monto = numeroAR($("invMonto").value), sub = $("invTipo").value, mon = $("invMoneda").value;
+      if (!nombre || !monto) return ($("invMsg").textContent = "Completa el nombre y el valor.");
+      const pf = sub === "plazo_fijo", tna = numeroAR($("invTna").value);
+      if (pf && (!tna || !$("invVto").value)) return ($("invMsg").textContent = "En un plazo fijo completa la TNA y el vencimiento.");
+      const { data: a, error } = await sb.from("activos").insert({ nombre, tipo: "inversion", subtipo: sub, moneda: mon,
+        capital: pf ? monto : null, tna: pf ? tna : null, fecha_inicio: pf ? $("invIni").value : null, fecha_vencimiento: pf ? $("invVto").value : null }).select().single();
+      if (error) return ($("invMsg").textContent = error.message.includes("duplicate") ? "Ya hay un activo con ese nombre." : error.message);
+      await sb.from("valuaciones").insert({ activo_id: a.id, fecha: pf ? $("invIni").value : hoyISO(), valor_min: monto, valor_max: monto, moneda: mon, fuente: "carga inicial" });
+      if (pf) await sb.from("compromisos").insert({ descripcion: `Vence ${nombre}`, tipo: "otro", activo_id: a.id, moneda: mon, indexacion: "ninguna",
+        frecuencia: "unica", fecha_proxima: a.fecha_vencimiento, monto: Math.round(devengado(a, a.fecha_vencimiento) * 100) / 100 });
+      await cargarReferencias(); verPatrimonio();
+    };
+    $("pat-c").querySelectorAll("[data-valuar]").forEach((b) => b.onclick = () => {
+      $("valActivo").value = b.dataset.valuar;
+      $("valMoneda").value = activos.find((a) => a.id === +b.dataset.valuar)?.moneda ?? "USD";
+      $("valFuente").value = "valor de mercado";
+      $("valMin").focus();
+    });
+    $("valGuardar").onclick = async () => {
+      const id = +$("valActivo").value, min = numeroAR($("valMin").value), max = numeroAR($("valMax").value) ?? min;
+      if (!id || !min) return ($("valMsg").textContent = "Elige el bien y escribe el valor.");
+      const { error } = await sb.from("valuaciones").insert({ activo_id: id, fecha: hoyISO(), valor_min: Math.min(min, max), valor_max: Math.max(min, max),
+        moneda: $("valMoneda").value, fuente: $("valFuente").value.trim() || "estimación propia" });
+      if (error) return ($("valMsg").textContent = error.message);
+      verPatrimonio();
+    };
+    if (prestUva.length) {
+      const llenar = () => { const p = prestUva.find((x) => x.id === +$("uvaPrest").value); $("uvaTna").value = p?.tna ?? ""; };
+      $("uvaPrest").onchange = llenar; llenar();
+      $("uvaCalc").onclick = () => {
+        const p = prestUva.find((x) => x.id === +$("uvaPrest").value);
+        const monto = numeroAR($("uvaMonto").value), tna = numeroAR($("uvaTna").value);
+        if (!monto || !tna) return ($("uvaRes").innerHTML = `<p class="tenue">Escribe el monto y la TNA del préstamo.</p>`);
+        const gastoMes = -lin.data.filter((l) => l.fecha >= sumarDias(hoy, -90) && rubroDe(l.rubro_id)?.tipo === "gasto")
+          .reduce((x, l) => x + Number(l.monto_ars ?? 0), 0) / 3;
+        const liqArs = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito").reduce((x, s) => x + (s.moneda === "USD" ? Number(s.saldo_estimado) * (v || 0) : Number(s.saldo_estimado)), 0);
+        $("uvaRes").innerHTML = precancelacion({ saldo: Number(p.saldo_capital), restantes: p.cuotas_total - p.cuota_actual, tna, monto,
+          uva: uva ? Number(uva.venta) : null, liquidez: liqArs, gastoMes });
+      };
+    }
   } catch (e) { $("pat-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// Sistema francés: cuota = S·i / (1 − (1+i)^−n). Precancelar baja la cuota (mismo plazo) o acorta el plazo (misma cuota).
+function precancelacion({ saldo, restantes: n, tna, monto, uva, liquidez, gastoMes }) {
+  if (monto >= saldo) return `<p class="tenue">El monto cancela todo el saldo (${pesos(saldo)}).</p>`;
+  const i = tna / 100 / 12, cuota = (S) => (S * i) / (1 - Math.pow(1 + i, -n));
+  const c0 = cuota(saldo), cA = cuota(saldo - monto);
+  const nB = -Math.log(1 - ((saldo - monto) * i) / c0) / Math.log(1 + i), menos = n - Math.ceil(nB);
+  const intA = n * c0 - n * cA - monto, intB = n * c0 - nB * c0 - monto;
+  const meses = gastoMes > 0 ? (liquidez - monto) / gastoMes : null;
+  return `<table class="mini" style="margin-top:.75rem"><tbody>
+    <tr><td>Saldo de capital hoy · cuotas que faltan</td><td class="num">${pesos(saldo)} · ${n}</td></tr>
+    <tr><td>Cuota actual (capital + interés, en pesos de hoy)</td><td class="num">${pesos(c0)}</td></tr>
+    <tr><th colspan="2">Opción A: mantener el plazo</th></tr>
+    <tr><td>Nueva cuota</td><td class="num mas">${pesos(cA)} (baja ${pesos(c0 - cA)} por mes)</td></tr>
+    <tr><td>Intereses que te ahorras</td><td class="num">${pesos(intA)}</td></tr>
+    <tr><th colspan="2">Opción B: mantener la cuota</th></tr>
+    <tr><td>Cuotas que se acortan</td><td class="num mas">${menos} (terminas ${Math.round(menos / 12 * 10) / 10} años antes)</td></tr>
+    <tr><td>Intereses que te ahorras</td><td class="num">${pesos(intB)}</td></tr>
+    ${meses != null ? `<tr><td>Liquidez que te quedaría</td><td class="num ${meses < 6 ? "menos" : ""}">${pesos(liquidez - monto)} (≈ ${meses.toFixed(1)} meses de gasto)</td></tr>` : ""}
+  </tbody></table>
+  <p class="tenue">Montos en pesos de hoy${uva ? ` (UVA ${fmt.format(uva)}; ${fmt.format(monto / uva)} UVAs)` : ""}: en un préstamo UVA el saldo y la cuota suben con la inflación.
+  Precancelar "rinde" la tasa del préstamo (${tna}% anual) más la inflación, sin riesgo. Usar esa plata de otra forma (por ejemplo, mantenerla en dólares) rinde lo que haga el dólar.
+  La variable clave es si el dólar sube más o menos que la inflación. Conviene mantener un fondo de reserva de al menos 6 meses de gasto antes de adelantar capital.</p>`;
 }
 
 // ---------------- PENDIENTES ----------------

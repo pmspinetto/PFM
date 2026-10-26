@@ -12,7 +12,8 @@
 //   SUPABASE_URL, SUPABASE_ANON_KEY, CAPTURA_EMAIL, CAPTURA_CLAVE
 //   REDIRECTORES (opcional): casillas propias que redirigen avisos con una regla de
 //   Outlook/Hotmail, separadas por coma
-// Además, una vez por día registra el dólar (oficial, MEP, blue y tarjeta) de dolarapi.com;
+// Además, una vez por día registra el dólar (oficial, MEP, blue y tarjeta) de dolarapi.com
+// y el valor UVA del BCRA;
 // esa llamada diaria también mantiene activo el proyecto gratuito de Supabase.
 // =====================================================================
 
@@ -95,9 +96,18 @@ function actualizarDolar(cfg, props, obtenerToken, forzar) {
   } catch (e) {
     console.warn("No se pudo leer el dólar: " + e.message);
   }
+  try {
+    var u = UrlFetchApp.fetch("https://api.bcra.gob.ar/estadisticas/v4.0/monetarias/31?desde=" + hoy + "&hasta=" + hoy,
+                              { muteHttpExceptions: true });
+    var detalle = u.getResponseCode() === 200 ? (JSON.parse(u.getContentText()).results[0] || {}).detalle || [] : [];
+    if (detalle.length) cotizaciones.push({ fecha: hoy, tipo: "uva", venta: detalle[0].valor });
+    else console.warn("No se pudo leer el valor UVA (respuesta " + u.getResponseCode() + ")");
+  } catch (e) {
+    console.warn("No se pudo leer el valor UVA: " + e.message);
+  }
   var n = llamar(cfg, obtenerToken(), "rpc/registrar_tipos_cambio", { p: { cotizaciones: cotizaciones } });
   props.setProperty("DOLAR_DIA", hoy);
-  console.log("Cotizaciones del dólar registradas hoy: " + n);
+  console.log("Cotizaciones registradas hoy (dólar y UVA): " + n);
 }
 
 // Ejecutar a mano para probar: registra el dólar del día sin esperar a las 18 h

@@ -145,3 +145,9 @@ await guardar({ cuenta_id: 3, documento: doc("resumen_tarjeta", "2026-10-01", "2
   movimientos: [{ ...mov("2026-10-05", "COLECTIVO", -10, "ARS", "rr1"), regla_id: regla.id }, { ...mov("2026-10-06", "COLECTIVO", -20, "ARS", "rr2"), regla_id: regla.id }] });
 console.log("R regla: antes", regla.veces_aplicada, "después", (await db.query("select veces_aplicada from reglas where id = $1", [regla.id])).rows[0].veces_aplicada,
   "| rubros.activo:", (await db.query("select bool_and(activo) as todos from rubros")).rows[0].todos);
+
+// P) Inversiones y valor UVA
+await run(`insert into activos (nombre, tipo, subtipo, moneda, capital, tna, fecha_inicio, fecha_vencimiento)
+  values ('Plazo fijo de prueba', 'inversion', 'plazo_fijo', 'ARS', 1000000, 30, '2026-10-01', '2026-10-31')`);
+console.log("P inversión:", (await db.query("select subtipo, capital, tna from activos where nombre = 'Plazo fijo de prueba'")).rows[0],
+  "| uva:", (await db.query(`select registrar_tipos_cambio('{"cotizaciones":[{"fecha":"2026-10-25","tipo":"uva","venta":2150.5}]}'::jsonb) as n`)).rows[0].n);
