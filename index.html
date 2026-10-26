@@ -74,7 +74,7 @@ details>summary{cursor:pointer;color:var(--marca);font-weight:600;font-size:.9re
 .form-grid input,.form-grid select{width:100%}
 .form-grid .acciones{display:flex;gap:.75rem;align-items:center;margin-top:1rem;grid-column:1/-1}
 .saldo-in{width:10rem;text-align:right}
-.alterna{display:inline-flex;background:var(--papel-2);border:1px solid var(--renglon);border-radius:8px;padding:3px;gap:3px;margin-bottom:.25rem}
+.alterna{display:inline-flex;flex-wrap:wrap;max-width:100%;background:var(--papel-2);border:1px solid var(--renglon);border-radius:8px;padding:3px;gap:3px;margin-bottom:.25rem}
 .alterna button{border:0;border-radius:6px;background:transparent;color:var(--tinta-2);padding:.35rem .9rem;font-weight:500}
 .alterna button.activo{background:var(--papel);color:var(--tinta);box-shadow:var(--sombra)}
 .filtro{display:flex;align-items:center;gap:.5rem;font-size:.85rem;color:var(--tinta-2);margin:0 0 .6rem}
@@ -235,7 +235,11 @@ section.bloque{margin-top:2rem}
       <select id="fMedio" aria-label="Medio de pago"><option value="">Todo medio de pago</option><option value="tarjeta">Tarjetas</option><option value="cuenta">Cuentas bancarias</option><option value="billetera">Billeteras</option><option value="efectivo">Efectivo</option></select>
       <select id="fMoneda" aria-label="Moneda"><option value="">Toda moneda</option><option value="ARS">Pesos</option><option value="USD">Dólares</option></select></div>
     <div id="mes-c"></div></section>
-  <section class="vista oculto" id="v-viene"><h2>Lo que viene</h2><p class="bajada">Vencimientos, cuotas y saldo proyectado</p><div id="viene-c"></div></section>
+  <section class="vista oculto" id="v-viene"><h2>Lo que viene</h2><p class="bajada">Vencimientos, cuotas y saldo proyectado</p>
+    <div class="barra-filtros"><div class="alterna" role="group" aria-label="Horizonte" id="horizonte">
+      <button type="button" data-dias="7">1 semana</button><button type="button" data-dias="15">15 días</button><button type="button" data-dias="30">1 mes</button>
+      <button type="button" data-dias="60">2 meses</button><button type="button" data-dias="90">3 meses</button><button type="button" data-dias="180">6 meses</button></div></div>
+    <div id="viene-c"></div></section>
   <section class="vista oculto" id="v-patrimonio"><h2>Patrimonio</h2><p class="bajada">Bienes, inversiones y deudas, en dólares</p><div id="pat-c"></div></section>
   <section class="vista oculto" id="v-pendientes"><h2>Pendientes</h2><p class="bajada">Lo que falta clasificar, confirmar o emparejar</p><div id="pend-c"></div></section>
   <section class="vista oculto" id="v-efectivo"><h2>Efectivo</h2><p class="bajada">Cajas, gastos en efectivo y arqueos</p><div id="efe-c"></div></section>
@@ -873,12 +877,12 @@ const COMO = {
   ingresos: `<p><code>Ingresos = Σ importe en pesos</code> de los movimientos del período con rubro de tipo <b>ingreso</b> (sueldos, alquileres cobrados, rendimientos…), con los filtros elegidos. Las transferencias entre cuentas propias no son ingresos.</p>`,
   ahorro: `<p><code>Ahorro = Σ (−importe en pesos)</code> de los movimientos del período con rubro de tipo <b>ahorro</b>: la parte de capital de las cuotas de préstamos (que reduce la deuda) y lo invertido.</p>`,
   dispViene: `<p><code>Disponible hoy = Σ saldo de las cuentas en pesos que no son tarjetas</code>, igual que en Hoy. Es el punto de partida del saldo proyectado. Los dólares no entran en esta proyección.</p>`,
-  egresos: `<p><code>Egresos = Σ |importe|</code> de los compromisos negativos en pesos que vencen en los próximos 60 días.</p><ul>
+  egresos: `<p><code>Egresos = Σ |importe|</code> de los compromisos negativos en pesos que vencen dentro del horizonte elegido (1 semana a 6 meses).</p><ul>
     <li>Los compromisos mensuales se repiten cada mes desde su primera fecha; los anuales, cada año; los únicos, una vez.</li>
     <li>Cada resumen de tarjeta agenda su vencimiento con el saldo a pagar y los próximos con las cuotas ya conocidas.</li>
     <li>Los que ajustan por IPC (por ejemplo, un alquiler trimestral) se multiplican en cada mes de ajuste por la inflación de los meses que terminan dos meses antes; los meses no publicados se estiman con el promedio de los últimos tres.</li>
     <li>Los que ajustan por UVA se proyectan con el importe cargado, sin indexar.</li></ul>`,
-  ingresosEsp: `<p><code>Ingresos esperados = Σ importe</code> de los compromisos positivos en pesos de los próximos 60 días (por ejemplo, sueldos, alquileres a cobrar o el vencimiento de un plazo fijo). Los que ajustan por IPC ya incluyen el ajuste que corresponda a cada mes.</p>`,
+  ingresosEsp: `<p><code>Ingresos esperados = Σ importe</code> de los compromisos positivos en pesos dentro del horizonte elegido (por ejemplo, sueldos, alquileres a cobrar o el vencimiento de un plazo fijo). Los que ajustan por IPC ya incluyen el ajuste que corresponda a cada mes.</p>`,
   minimo: `<p>El saldo proyectado arranca en el disponible de hoy y, en orden de fecha, suma o resta cada compromiso: <code>saldo después = saldo anterior + importe del compromiso</code>.</p><p><code>Saldo más bajo = mínimo de esa serie</code>, incluido el saldo de hoy. Si es negativo, antes de esa fecha vas a necesitar fondos.</p>`,
   patNeto: `<p><code>Patrimonio neto = liquidez + bienes e inversiones − deudas</code>, todo en dólares al último MEP.</p><p>Los préstamos restan su saldo de capital; las tarjetas, su deuda neta (solo se descuentan los pagos que ya figuran en una cuenta).</p>`,
   liquidez: `<p><code>Liquidez = Σ saldo de las cuentas que no son tarjetas</code>, pasadas a dólares: <code>pesos ÷ MEP</code>; las cuentas en dólares, tal cual.</p>${SALDO_CUENTA}`,
@@ -1272,9 +1276,19 @@ async function detalleGastos(lineas) {
 }
 
 // ---------------- LO QUE VIENE ----------------
+// Horizonte de Lo que viene (se recuerda en este navegador)
+let horizonte = (() => { try { return +localStorage.getItem("horizonte") || 60; } catch { return 60; } })();
+const nombreHorizonte = (d) => ({ 7: "1 semana", 15: "15 días", 30: "1 mes", 60: "2 meses", 90: "3 meses", 180: "6 meses" }[d] ?? `${d} días`);
+document.querySelectorAll("#horizonte [data-dias]").forEach((b) => b.onclick = () => {
+  horizonte = +b.dataset.dias;
+  try { localStorage.setItem("horizonte", horizonte); } catch {}
+  verViene();
+});
+
 async function verViene() {
   try {
-    const hoy = hoyISO(), fin = sumarDias(hoy, 60);
+    document.querySelectorAll("#horizonte [data-dias]").forEach((b) => b.classList.toggle("activo", +b.dataset.dias === horizonte));
+    const hoy = hoyISO(), fin = sumarDias(hoy, horizonte), hz = nombreHorizonte(horizonte);
     const [ss, fl, cq, fq] = await Promise.all([
       saldos(),
       sb.from("v_flujo_proyectado").select("*").gte("fecha", hoy).lte("fecha", fin).order("fecha"),
@@ -1314,15 +1328,15 @@ async function verViene() {
     $("viene-c").innerHTML = `
       <div class="cifras">
         ${cifra("Disponible hoy en pesos", pesos(inicial), "", "total", detDisp, COMO.dispViene)}
-        ${cifra("Egresos comprometidos (60 días)", pesos(egresos), "", "", detFlujo((f) => f.monto < 0, "No hay egresos comprometidos."), COMO.egresos)}
-        ${cifra("Ingresos esperados (60 días)", pesos(ingresos), "", "", detFlujo((f) => f.monto > 0, "No hay ingresos esperados."), COMO.ingresosEsp)}
+        ${cifra(`Egresos comprometidos (${hz})`, pesos(egresos), "", "", detFlujo((f) => f.monto < 0, "No hay egresos comprometidos."), COMO.egresos)}
+        ${cifra(`Ingresos esperados (${hz})`, pesos(ingresos), "", "", detFlujo((f) => f.monto > 0, "No hay ingresos esperados."), COMO.ingresosEsp)}
         ${cifra("Saldo más bajo proyectado", pesos(minimo), minimo < 0 ? "Vas a necesitar fondos antes de esa fecha" : fMin ? `El ${dm(fMin)}` : "", "", detFlujo((f) => !fMin || f.fecha <= fMin, "No hay movimientos proyectados."), COMO.minimo)}
       </div>
-      <div class="panel"><h3>Saldo proyectado</h3><div class="lienzo"><canvas id="gViene"></canvas></div></div>
+      <div class="panel"><h3>Flujo y saldo proyectado</h3><div class="lienzo" style="height:360px"><canvas id="gViene"></canvas></div></div>
       <div class="panel"><h3>Próximos vencimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
         ${filas.map((f) => `<tr><td>${dm(f.fecha)}</td><td>${esc(f.descripcion)}${f.indexacion !== "ninguna" ? ` <span class="tenue">(${f.indexacion === "uva" ? "ajusta por UVA" : f.indexacion === "ipc" ? "ajustado por IPC, estimado" : "estimado"})</span>` : ""}</td>
           <td class="num ${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</td><td class="num tenue">${pesos(f.saldo)}</td></tr>`).join("") ||
-          `<tr><td class="tenue">No hay compromisos cargados en los próximos 60 días.</td></tr>`}
+          `<tr><td class="tenue">No hay compromisos cargados en ${hz === "1 semana" ? "la próxima semana" : `los próximos ${hz}`}.</td></tr>`}
       </tbody></table></div>
       <p class="tenue">Incluye hipoteca, alquiler, seguros y expensas cargados como compromisos, el vencimiento de cada resumen de tarjeta importado y las cuotas que quedan de cada compra en cuotas (estimado: los consumos nuevos se suman cuando cierra cada resumen).</p></div>
       <div class="panel" id="pFijos"><h3>Ingresos y gastos fijos</h3>
@@ -1344,21 +1358,47 @@ async function verViene() {
 
     $("btnFijo").onclick = () => editarFijo(null);
     $("viene-c").querySelectorAll("[data-editar-fijo]").forEach((b) => b.onclick = () => editarFijo(fijos.find((k) => k.id === +b.dataset.editarFijo)));
+    // Flujo por día (hasta 2 meses) o por semana (3 y 6 meses): barras de ingresos y egresos + línea de saldo
+    const paso = horizonte > 60 ? 7 : 1;
+    const tramos = [];
+    for (let d = hoy; d <= fin; d = sumarDias(d, paso)) tramos.push({ desde: d, hasta: sumarDias(d, paso - 1), ing: 0, egr: 0, items: [] });
+    let acum = inicial;
+    for (const tr of tramos) {
+      for (const f of filas.filter((x) => x.fecha >= tr.desde && x.fecha <= tr.hasta)) {
+        if (f.monto > 0) tr.ing += Number(f.monto); else tr.egr += Number(f.monto);
+        tr.items.push(f);
+      }
+      acum += tr.ing + tr.egr; tr.saldo = acum;
+    }
+    const minTramo = tramos.reduce((m, t) => (t.saldo < m.saldo ? t : m), tramos[0]);
+    const etiqueta = (t) => (paso === 1 ? dm(t.desde) : `${dm(t.desde)}–${dm(t.hasta)}`);
     const ctxV = document.getElementById("gViene").getContext("2d");
     const relleno = ctxV.createLinearGradient(0, 0, 0, 320);
-    relleno.addColorStop(0, css("--marca") + "55"); relleno.addColorStop(1, css("--marca") + "05");
+    relleno.addColorStop(0, css("--marca") + "40"); relleno.addColorStop(1, css("--marca") + "00");
+    const compactoV = (v) => Math.abs(v) >= 1e6 ? (v < 0 ? "−" : "") + "$ " + (Math.abs(v) / 1e6).toFixed(1).replace(".", ",") + " M"
+      : Math.abs(v) >= 1e3 ? (v < 0 ? "−" : "") + "$ " + Math.round(Math.abs(v) / 1e3) + " mil" : pesos(v);
     grafico("gViene", {
-      type: "line",
-      data: { labels: [dm(hoy), ...filas.map((f) => dm(f.fecha))],
-              datasets: [{ label: "Saldo proyectado", data: [inicial, ...filas.map((f) => Math.round(f.saldo))], fill: true, backgroundColor: relleno,
-                           borderColor: css("--marca"), stepped: true, borderWidth: 2,
-                           pointRadius: [4, ...filas.map((f) => (f.saldo === minimo ? 6 : 3))],
-                           pointBackgroundColor: [css("--marca"), ...filas.map((f) => (f.saldo < 0 ? css("--sale") : f.monto < 0 ? css("--marca") : css("--entra")))] }] },
-      options: { maintainAspectRatio: false, interaction: { mode: "nearest", intersect: false },
-                 plugins: { legend: { display: false }, tooltip: { callbacks: {
-                   title: (it) => (it[0].dataIndex === 0 ? "Hoy" : `${dm(filas[it[0].dataIndex - 1].fecha)} · ${filas[it[0].dataIndex - 1].descripcion}`),
-                   label: (c) => (c.dataIndex === 0 ? ` Disponible: ${pesos(c.raw)}` : ` ${pesos(filas[c.dataIndex - 1].monto)} → saldo ${pesos(c.raw)}`) } } },
-                 scales: { x: { grid: { display: false } }, y: { ticks: { callback: (v) => pesos(v) } } } },
+      data: { labels: tramos.map(etiqueta), datasets: [
+        { type: "line", label: "Saldo proyectado", data: tramos.map((t) => Math.round(t.saldo)), yAxisID: "y", order: 0,
+          borderColor: css("--marca"), backgroundColor: relleno, fill: "origin", cubicInterpolationMode: "monotone", borderWidth: 2.5,
+          pointRadius: tramos.map((t) => (t === minTramo ? 5 : 0)), pointHoverRadius: 5,
+          pointBackgroundColor: tramos.map((t) => (t.saldo < 0 ? css("--sale") : css("--laton"))),
+          segment: { borderColor: (c) => (c.p1.parsed.y < 0 ? css("--sale") : css("--marca")) } },
+        { type: "bar", label: "Ingresos", data: tramos.map((t) => Math.round(t.ing)), yAxisID: "y", stack: "flujo", order: 1,
+          backgroundColor: css("--entra") + "B3", borderRadius: 3, maxBarThickness: 18 },
+        { type: "bar", label: "Egresos", data: tramos.map((t) => Math.round(t.egr)), yAxisID: "y", stack: "flujo", order: 1,
+          backgroundColor: css("--sale") + "B3", borderRadius: 3, maxBarThickness: 18 } ] },
+      options: { maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+        plugins: { legend: { position: "top", align: "end" },
+          tooltip: { padding: 10, callbacks: {
+            title: (it) => (paso === 1 ? `${dm(tramos[it[0].dataIndex].desde)}${tramos[it[0].dataIndex].desde === hoy ? " (hoy)" : ""}` : `Semana ${etiqueta(tramos[it[0].dataIndex])}`),
+            label: (c) => (c.raw ? ` ${c.dataset.label}: ${pesos(c.raw)}` : null),
+            afterBody: (it) => tramos[it[0].dataIndex].items.slice(0, 6).map((f) => `• ${f.descripcion}: ${pesos(f.monto)}`)
+              .concat(tramos[it[0].dataIndex].items.length > 6 ? [`• y ${tramos[it[0].dataIndex].items.length - 6} más`] : []) } } },
+        scales: {
+          x: { stacked: true, grid: { display: false }, ticks: { maxRotation: 0, autoSkipPadding: 12 } },
+          y: { ticks: { callback: compactoV },
+               grid: { color: (c) => (c.tick.value === 0 ? css("--tinta-3") : css("--renglon")), lineWidth: (c) => (c.tick.value === 0 ? 1.5 : 1) } } } },
     });
   } catch (e) { $("viene-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
 }
