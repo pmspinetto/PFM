@@ -180,7 +180,7 @@ section.bloque{margin-top:2rem}
   #menu nav a{white-space:nowrap;padding:.45rem .65rem;font-size:.88rem}
   #menu nav a svg{display:none}
   #menu .sep,#menu .pie-menu{display:none}
-  main{padding:1.25rem 1rem 2.5rem}
+  main{width:100%;padding:1.25rem 1rem 2.5rem}
   .dos{grid-template-columns:1fr}
   .cifra .val{font-size:1.35rem}
   .ecuacion .res{margin-left:0;width:100%}
@@ -1289,15 +1289,17 @@ async function verViene() {
   try {
     document.querySelectorAll("#horizonte [data-dias]").forEach((b) => b.classList.toggle("activo", +b.dataset.dias === horizonte));
     const hoy = hoyISO(), fin = sumarDias(hoy, horizonte), hz = nombreHorizonte(horizonte);
-    const [ss, fl, cq, fq] = await Promise.all([
+    const [ss, fl, cq, fq, kq] = await Promise.all([
       saldos(),
       sb.from("v_flujo_proyectado").select("*").gte("fecha", hoy).lte("fecha", fin).order("fecha"),
       sb.from("movimientos").select("cuenta_id, fecha, descripcion_original, monto, moneda, cuota_nro, cuotas_total")
         .not("cuotas_total", "is", null).gte("fecha", sumarDias(hoy, -75)).lt("monto", 0),
       sb.from("compromisos").select("*").eq("activo", true).neq("tipo", "vencimiento_tarjeta").order("fecha_proxima"),
+      sb.from("compromisos").select("id, cuenta_id").eq("activo", true),
     ]);
     if (fl.error) throw fl.error;
     if (fq.error) throw fq.error;
+    if (kq.error) throw kq.error;
     const fijos = fq.data;
     if (cq.error) throw cq.error;
     // Cuotas que terminan: del último resumen de cada tarjeta, en qué mes se paga la última cuota
@@ -1324,6 +1326,10 @@ async function verViene() {
     const detFlujo = (cond, vacio) => { const xs = filas.filter(cond);
       return xs.length ? tablaDetalle(xs.map((f) => [`${dm(f.fecha)} · ${esc(f.descripcion)}`, `<span class="${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</span>`, `Saldo después: ${pesos(f.saldo)}`]),
         ["Total", pesos(xs.reduce((a, f) => a + Number(f.monto), 0))]) : `<p class="tenue">${vacio}</p>`; };
+    const pc = proyectarPorCuenta(ss, filas, Object.fromEntries(kq.data.map((k) => [k.id, k.cuenta_id])), hoy, fin);
+    const textoPase = (p) => p.de.c.tipo === "caja_efectivo" ? `Deposita <strong>${pesos(p.monto)}</strong> de ${esc(p.de.c.alias)} en ${esc(p.a.c.alias)}`
+      : p.a.c.tipo === "caja_efectivo" ? `Retira <strong>${pesos(p.monto)}</strong> de ${esc(p.de.c.alias)} para ${esc(p.a.c.alias)}`
+      : `Transfiere <strong>${pesos(p.monto)}</strong> de ${esc(p.de.c.alias)} a ${esc(p.a.c.alias)}`;
 
     $("viene-c").innerHTML = `
       <div class="cifras">
@@ -1333,6 +1339,21 @@ async function verViene() {
         ${cifra("Saldo más bajo proyectado", pesos(minimo), minimo < 0 ? "Vas a necesitar fondos antes de esa fecha" : fMin ? `El ${dm(fMin)}` : "", "", detFlujo((f) => !fMin || f.fecha <= fMin, "No hay movimientos proyectados."), COMO.minimo)}
       </div>
       <div class="panel"><h3>Flujo y saldo proyectado</h3><div class="lienzo" style="height:360px"><canvas id="gViene"></canvas></div></div>
+      <div class="panel" id="pPorCuenta"><h3>Por cuenta</h3>
+        ${pc.pases.length || pc.faltantes.length ? `<div class="msg info" style="margin-top:0"><strong>Para que ninguna cuenta quede en rojo:</strong>
+          <ul style="margin:.4rem 0 0;padding-left:1.2rem">
+            ${pc.pases.map((p) => `<li>${textoPase(p)} a más tardar el ${dm(p.hasta)}.</li>`).join("")}
+            ${pc.faltantes.map((f) => `<li>A ${esc(f.a.c.alias)} le faltan <strong>${pesos(f.monto)}</strong> el ${dm(f.fecha)} y no alcanza con lo que sobra en las otras cuentas.</li>`).join("")}
+          </ul></div>`
+          : pc.lista.some((x) => x.items.length) ? `<div class="msg ok" style="margin-top:0">Con lo cargado, ninguna cuenta queda en rojo hasta el ${dm(fin)}.</div>` : ""}
+        <div class="tabla"><table class="mini"><thead><tr><th>Cuenta</th><th class="num">Hoy</th><th class="num">Entra</th><th class="num">Sale</th><th class="num">Al ${dm(fin)}</th><th class="num">Punto más bajo</th></tr></thead><tbody>
+          ${pc.lista.map((x) => `<tr><td>${esc(x.c.alias)}${x.informado ? "" : ` <span class="chip">sin saldo cargado</span>`}</td>
+            <td class="num">${pesos(x.hoy)}</td><td class="num mas">${x.entra ? pesos(x.entra) : ""}</td><td class="num menos">${x.sale ? pesos(-x.sale) : ""}</td>
+            <td class="num">${pesos(x.final)}</td><td class="num ${x.min < 0 ? "menos" : "tenue"}">${pesos(x.min)}${x.fMin ? ` <span class="tenue">el ${dm(x.fMin)}</span>` : ""}</td></tr>`).join("") ||
+            `<tr><td class="tenue" colspan="6">No hay saldos ni compromisos en pesos.</td></tr>`}
+        </tbody></table></div>
+        ${pc.sinCuenta.length ? `<p class="tenue">Sin cuenta asignada: ${pc.sinCuenta.map((f) => `${esc(f.descripcion)} (${dm(f.fecha)}, ${pesos(f.monto)})`).join(", ")}. No entran en esta tabla ni en las transferencias sugeridas: asígnales una cuenta con "Editar" en Ingresos y gastos fijos.</p>` : ""}
+        <p class="tenue">Cada compromiso se imputa a su cuenta; los vencimientos de tarjeta, a la cuenta en pesos del mismo banco y titular. Las transferencias sugeridas toman de las cuentas a las que les sobra plata ese día sin que queden en rojo después. El punto más bajo de cada cuenta no incluye esas transferencias.</p></div>
       <div class="panel"><h3>Próximos vencimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
         ${filas.map((f) => { const kk = fijos.find((x) => x.id === f.compromiso_id), nc = kk && cuotasDe(kk);
           return `<tr><td>${dm(f.fecha)}</td><td>${esc(f.descripcion)}${nc ? ` <span class="chip">cuota ${cuotaNro(kk, f.fecha)} de ${nc}</span>` : ""}${f.indexacion !== "ninguna" ? ` <span class="tenue">(${f.indexacion === "uva" ? "ajusta por UVA" : f.indexacion === "ipc" ? "ajustado por IPC, estimado" : "estimado"})</span>` : ""}</td>
@@ -1402,6 +1423,58 @@ async function verViene() {
                grid: { color: (c) => (c.tick.value === 0 ? css("--tinta-3") : css("--renglon")), lineWidth: (c) => (c.tick.value === 0 ? 1.5 : 1) } } } },
     });
   } catch (e) { $("viene-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// Cuenta en pesos que paga una tarjeta: del mismo banco y, si hay, del mismo titular (primero la cuenta sueldo)
+function cuentaPagadora(t) {
+  const orden = { cuenta_sueldo: 0, caja_ahorro: 1, cuenta_corriente: 2 };
+  return ref.cuentas.filter((c) => c.activa && c.tipo in orden && c.moneda !== "USD" && c.institucion_id === t.institucion_id)
+    .sort((a, b) => (a.persona_id !== t.persona_id) - (b.persona_id !== t.persona_id) || orden[a.tipo] - orden[b.tipo])[0] ?? null;
+}
+
+// Saldo proyectado día por día de cada cuenta en pesos y transferencias que hacen falta para que ninguna
+// quede en rojo: el día que una cuenta pasa a negativo se cubre con lo que les sobra a las otras ese día
+// (lo que pueden ceder sin quedar en rojo hasta el final del horizonte)
+function proyectarPorCuenta(ss, filas, cuentaDe, hoy, fin) {
+  const dias = []; for (let d = hoy; d <= fin; d = sumarDias(d, 1)) dias.push(d);
+  const cuentas = new Map(), sinCuenta = [];
+  const de = (c) => { if (!cuentas.has(c.id)) cuentas.set(c.id, { c, hoy: 0, informado: false, entra: 0, sale: 0, items: [] }); return cuentas.get(c.id); };
+  ss.filter((s) => s.cuenta && s.cuenta.tipo !== "tarjeta_credito" && s.moneda === "ARS")
+    .forEach((s) => { const x = de(s.cuenta); x.hoy += Number(s.saldo_estimado); x.informado = true; });
+  for (const f of filas) {
+    let c = ref.cuentas.find((x) => x.id === cuentaDe[f.compromiso_id]);
+    if (c?.tipo === "tarjeta_credito") c = cuentaPagadora(c);
+    if (!c || c.moneda === "USD") { sinCuenta.push(f); continue; }
+    const x = de(c); x.items.push(f);
+    if (f.monto > 0) x.entra += Number(f.monto); else x.sale -= Number(f.monto);
+  }
+  const lista = [...cuentas.values()].filter((x) => Math.abs(x.hoy) >= 0.005 || x.items.length);
+  for (const x of lista) {
+    let s = x.hoy;
+    x.serie = dias.map((d) => { for (const f of x.items) if (f.fecha === d) s += Number(f.monto); return s; });
+    x.final = s; x.min = Math.min(x.hoy, ...x.serie);
+    x.fMin = x.min < x.hoy ? dias[x.serie.indexOf(x.min)] : null;
+    x.ajustada = [...x.serie];
+  }
+  const sobra = (y, i) => Math.min(...y.ajustada.slice(i));
+  const mover = (y, i, m) => { for (let j = i; j < dias.length; j++) y.ajustada[j] += m; };
+  const pases = [], faltantes = [];
+  dias.forEach((d, i) => {
+    for (const x of lista) {
+      if (x.ajustada[i] >= -0.5) continue;
+      let falta = -x.ajustada[i];
+      for (const y of lista.filter((y) => y !== x && sobra(y, i) > 0.5).sort((a, b) => sobra(b, i) - sobra(a, i))) {
+        if (falta <= 0.5) break;
+        const m = Math.min(falta, sobra(y, i));
+        mover(y, i, -m); mover(x, i, m); falta -= m;
+        const p = pases.find((p) => p.de === y && p.a === x && p.hasta === d);
+        if (p) p.monto += m; else pases.push({ de: y, a: x, monto: m, hasta: d });
+      }
+      if (falta > 0.5) { faltantes.push({ a: x, monto: falta, fecha: d }); mover(x, i, falta); }
+    }
+  });
+  lista.sort((a, b) => (a.min < 0 ? a.min : 0) - (b.min < 0 ? b.min : 0) || b.hoy - a.hoy);
+  return { lista, pases, faltantes, sinCuenta };
 }
 
 // Alta y edición de ingresos y gastos fijos (tabla compromisos)
