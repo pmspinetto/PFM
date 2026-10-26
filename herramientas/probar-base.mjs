@@ -210,3 +210,17 @@ await run(`delete from compromisos;
   ('Patente', 'otro', -100, 'ARS', 'trimestral', current_date + 1), ('Seguro', 'seguro', -200, 'ARS', 'semestral', current_date + 1);`);
 console.log("Q próximos 12 meses:", (await db.query(`select descripcion, count(*)::int as n from v_flujo_proyectado
   where fecha <= current_date + interval '12 months' group by 1 order by 1`)).rows);
+
+// R) Aguinaldo: 50 % del sueldo del titular y 40 % del de otro integrante, el 30/06 y el 18/12
+await run(`delete from compromisos;
+  insert into personas (nombre, tipo) values ('F', 'familiar');
+  insert into cuentas (alias, persona_id, tipo, moneda) values ('Cuenta F', (select max(id) from personas), 'caja_ahorro', 'ARS');
+  insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima, cuenta_id) values
+  ('Sueldo T', 'otro', 1000, 'ARS', 'mensual', current_date + 5, 1),
+  ('Sueldo F', 'otro', 2000, 'ARS', 'mensual', current_date + 5, (select max(id) from cuentas)),
+  ('Honorarios', 'otro', 500, 'ARS', 'mensual', current_date + 5, 1);`);
+const updAgui = fs.readFileSync(new URL("../supabase/migrations/20261027090000_aguinaldo.sql", import.meta.url), "utf8").match(/update compromisos k[\s\S]*?;/)[0];
+await run(updAgui);
+console.log("R marcados:", (await db.query("select descripcion, aguinaldo from compromisos order by id")).rows);
+console.log("R aguinaldos próximos 12 meses:", (await db.query(`select descripcion, fecha::text, monto from v_flujo_proyectado
+  where aguinaldo order by fecha, descripcion`)).rows);
