@@ -10,123 +10,189 @@
 <script src="vendor/supabase-js@2.45.4/supabase.js"></script>
 <script src="vendor/chart.js@4.4.1/chart.umd.js"></script>
 <style>
+/* ===================== Sistema visual ===================== */
 :root{
-  --fondo:#EBF0EA; --papel:#F7FAF6; --tinta:#1D2B25; --tinta-2:#53645C;
-  --renglon:#C8D5CB; --laton:#9A7428; --entra:#2C6A4C; --sale:#9E3434;
-  --aviso:#F3E7C6; --error:#F4D9D6; --ok:#D7E9DD;
-  --font:"Public Sans", "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --fondo:#F3F5F4; --papel:#FFFFFF; --papel-2:#F8FAF9; --tinta:#14231C; --tinta-2:#5C6B64; --tinta-3:#8A9690;
+  --renglon:#E3E8E5; --marca:#1E5A43; --marca-2:#E6F0EB; --laton:#A57C2D;
+  --entra:#1E7A4F; --sale:#B23A30;
+  --aviso:#FBF3DF; --aviso-borde:#E5C878; --error:#FBE9E7; --error-borde:#E6A39C; --ok:#E5F3EB; --ok-borde:#8CC5A5;
+  --sombra:0 1px 2px rgba(20,35,28,.05),0 2px 8px rgba(20,35,28,.05);
+  --radio:10px; --font:"Public Sans","Segoe UI",Roboto,Helvetica,Arial,sans-serif;
 }
 @media (prefers-color-scheme: dark){
   :root{
-    --fondo:#121916; --papel:#1A231F; --tinta:#E2EAE4; --tinta-2:#9AAAA1;
-    --renglon:#2F3B35; --laton:#CFA75C; --entra:#6CC196; --sale:#E28A80;
-    --aviso:#3A331F; --error:#432523; --ok:#1F3A2B;
+    --fondo:#0F1513; --papel:#161E1B; --papel-2:#1B2521; --tinta:#E4ECE7; --tinta-2:#9EADA5; --tinta-3:#6F7D76;
+    --renglon:#26312C; --marca:#5FB892; --marca-2:#1C2E26; --laton:#D1A957;
+    --entra:#6CC79A; --sale:#EC8A80;
+    --aviso:#2E2717; --aviso-borde:#6B5726; --error:#331C1A; --error-borde:#6E3530; --ok:#17291F; --ok-borde:#2F5E44;
+    --sombra:0 1px 2px rgba(0,0,0,.3);
   }
 }
 *{box-sizing:border-box}
-body{margin:0;background:var(--fondo);color:var(--tinta);font:15px/1.5 var(--font);font-variant-numeric:tabular-nums}
-header{display:flex;align-items:baseline;justify-content:space-between;gap:1rem;padding:1.25rem 1.5rem;border-bottom:2px solid var(--tinta)}
-header h1{margin:0;font-size:1.5rem;font-weight:700;letter-spacing:-.01em}
-header span{color:var(--tinta-2);font-size:.875rem}
-main{max-width:1180px;margin:0 auto;padding:1.5rem}
+html,body{margin:0}
+body{background:var(--fondo);color:var(--tinta);font:14.5px/1.5 var(--font);font-variant-numeric:tabular-nums;-webkit-font-smoothing:antialiased}
 button,input,select{font:inherit;color:inherit}
-button{cursor:pointer;border:1.5px solid var(--tinta);background:var(--tinta);color:var(--papel);padding:.55rem 1.1rem;border-radius:3px;font-weight:600}
-button.sec{background:transparent;color:var(--tinta)}
-button:disabled{opacity:.4;cursor:not-allowed}
-:focus-visible{outline:3px solid var(--laton);outline-offset:2px}
-input[type=email],input[type=password],input[type=text],input[type=date],select{background:var(--papel);border:1px solid var(--renglon);border-radius:3px;padding:.5rem .6rem}
-label{display:block;font-size:.875rem;color:var(--tinta-2);margin:.75rem 0 .25rem}
+a{color:var(--marca)}
+:focus-visible{outline:2px solid var(--marca);outline-offset:2px}
 .oculto{display:none!important}
-.caja{background:var(--papel);border:1px solid var(--renglon);border-radius:4px;padding:1.5rem}
-#login{max-width:380px;margin:4rem auto}
-#login input{width:100%}
-#login button{margin-top:1.25rem;width:100%}
-#soltar{border:2px dashed var(--renglon);border-radius:4px;padding:2.5rem 1.5rem;text-align:center;background:var(--papel)}
-#soltar.encima{border-color:var(--laton)}
-#soltar p{margin:.25rem 0}
-#soltar .chico{color:var(--tinta-2);font-size:.875rem}
-.msg{margin:1rem 0;padding:.75rem 1rem;border-radius:3px}
-.msg.error{background:var(--error)} .msg.ok{background:var(--ok)} .msg.info{background:var(--aviso)}
-section.bloque{margin-top:2rem}
-.cabecera{display:flex;flex-wrap:wrap;align-items:center;gap:.75rem 1.25rem;margin-bottom:.75rem}
-.cabecera h2{margin:0;font-size:1.125rem}
-.cabecera .desc{color:var(--tinta-2);font-size:.875rem}
-.plasticos{background:var(--aviso);border-radius:4px;padding:.6rem .9rem;margin-bottom:.75rem;display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;align-items:center}
-.plasticos p{margin:0;width:100%;font-size:.875rem}
-.plasticos label{margin:0;display:flex;gap:.5rem;align-items:center}
-/* La ecuación de conciliación: el elemento central de la página */
-.ecuacion{display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem .9rem;padding:.9rem 1.1rem;border-left:5px solid var(--sale);background:var(--papel);margin:.5rem 0 1rem;border-radius:0 4px 4px 0}
-.ecuacion.cierra{border-left-color:var(--entra)}
-.ecuacion .n{font-size:1.25rem;font-weight:600}
-.ecuacion .op{color:var(--tinta-2);font-size:1.25rem}
-.ecuacion .lbl{display:block;font-size:.75rem;color:var(--tinta-2)}
-.ecuacion .res{margin-left:auto;font-weight:600}
-.tabla{overflow-x:auto;border:1px solid var(--renglon);border-radius:4px;background:var(--papel)}
+
+/* ---- Estructura: barra lateral + contenido ---- */
+.marco{display:flex;min-height:100vh}
+#menu{width:236px;flex:none;background:var(--papel);border-right:1px solid var(--renglon);display:flex;flex-direction:column;position:sticky;top:0;height:100vh;padding:1.25rem .9rem}
+.marca{display:flex;align-items:center;gap:.65rem;padding:0 .5rem 1.25rem;font-weight:700;font-size:1.05rem;letter-spacing:-.01em}
+.marca .logo{width:32px;height:32px;border-radius:8px;background:var(--marca);color:#fff;display:grid;place-items:center;font-size:.9rem;font-weight:700;letter-spacing:.02em}
+.marca small{display:block;font-weight:500;font-size:.72rem;color:var(--tinta-3);letter-spacing:.04em;text-transform:uppercase}
+#menu nav{display:flex;flex-direction:column;gap:2px}
+#menu nav a{display:flex;align-items:center;gap:.7rem;color:var(--tinta-2);text-decoration:none;padding:.55rem .7rem;border-radius:8px;font-weight:500;font-size:.93rem}
+#menu nav a svg{width:18px;height:18px;flex:none;stroke:currentColor;fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round}
+#menu nav a:hover{background:var(--papel-2);color:var(--tinta)}
+#menu nav a.activo{background:var(--marca-2);color:var(--marca);font-weight:600}
+#menu .sep{height:1px;background:var(--renglon);margin:.6rem .5rem}
+#menu .pie-menu{margin-top:auto;padding:.75rem .5rem 0;border-top:1px solid var(--renglon);font-size:.8rem;color:var(--tinta-3);display:flex;flex-direction:column;gap:.4rem}
+#menu .pie-menu #usuario{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+#menu .pie-menu button{align-self:flex-start;background:none;border:0;color:var(--tinta-2);padding:0;font-size:.8rem;font-weight:500;text-decoration:underline;cursor:pointer}
+main{flex:1;min-width:0;max-width:1240px;margin:0 auto;padding:2rem 2.25rem 3rem}
+
+/* ---- Encabezado de cada vista ---- */
+.vista>h2{font-size:1.55rem;font-weight:700;letter-spacing:-.02em;margin:0}
+.vista>.bajada{color:var(--tinta-2);margin:.2rem 0 1.5rem;font-size:.95rem}
+
+/* ---- Botones y formularios ---- */
+button{cursor:pointer;border:1px solid var(--marca);background:var(--marca);color:#fff;padding:.5rem 1rem;border-radius:8px;font-weight:600;font-size:.9rem;line-height:1.3;transition:filter .15s,background .15s}
+button:hover{filter:brightness(1.08)}
+button.sec{background:var(--papel);color:var(--tinta);border-color:var(--renglon);font-weight:500}
+button.sec:hover{background:var(--papel-2);filter:none}
+button:disabled{opacity:.45;cursor:not-allowed}
+input[type=email],input[type=password],input[type=text],input[type=date],input[type=month],select{background:var(--papel);border:1px solid var(--renglon);border-radius:8px;padding:.48rem .65rem;font-size:.92rem;min-height:2.25rem}
+input:focus,select:focus{outline:none;border-color:var(--marca);box-shadow:0 0 0 3px var(--marca-2)}
+input[type=checkbox],input[type=radio]{accent-color:var(--marca);width:1rem;height:1rem}
+label{display:block;font-size:.8rem;font-weight:500;color:var(--tinta-2);margin:.75rem 0 .3rem}
+details>summary{cursor:pointer;color:var(--marca);font-weight:600;font-size:.9rem}
+.barra-filtros{display:flex;flex-wrap:wrap;gap:.6rem;align-items:center;margin-bottom:1.25rem}
+.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:.25rem 1rem;align-items:end}
+.form-grid label{margin:.6rem 0 .3rem}
+.form-grid input,.form-grid select{width:100%}
+.form-grid .acciones{display:flex;gap:.75rem;align-items:center;margin-top:1rem;grid-column:1/-1}
+.saldo-in{width:10rem;text-align:right}
+.alterna{display:inline-flex;background:var(--papel-2);border:1px solid var(--renglon);border-radius:8px;padding:3px;gap:3px;margin-bottom:.25rem}
+.alterna button{border:0;border-radius:6px;background:transparent;color:var(--tinta-2);padding:.35rem .9rem;font-weight:500}
+.alterna button.activo{background:var(--papel);color:var(--tinta);box-shadow:var(--sombra)}
+.filtro{display:flex;align-items:center;gap:.5rem;font-size:.85rem;color:var(--tinta-2);margin:0 0 .6rem}
+
+/* ---- Tarjetas de cifras y paneles ---- */
+.cifras{display:grid;grid-template-columns:repeat(auto-fit,minmax(215px,1fr));gap:1rem;margin-bottom:1.5rem}
+.cifra{background:var(--papel);border:1px solid var(--renglon);border-radius:var(--radio);padding:1.1rem 1.2rem;box-shadow:var(--sombra)}
+.cifra .lbl{font-size:.74rem;font-weight:600;color:var(--tinta-3);text-transform:uppercase;letter-spacing:.06em}
+.cifra .val{font-size:1.6rem;font-weight:700;margin-top:.35rem;letter-spacing:-.02em;line-height:1.15}
+.cifra .sub{font-size:.8rem;color:var(--tinta-2);margin-top:.35rem}
+.cifra.total{border-top:3px solid var(--marca)}
+.dos{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem}
+.panel{background:var(--papel);border:1px solid var(--renglon);border-radius:var(--radio);padding:1.15rem 1.25rem;margin-bottom:1.25rem;box-shadow:var(--sombra)}
+.panel h3,.vista h3{margin:0 0 .85rem;font-size:.98rem;font-weight:650;letter-spacing:-.01em}
+.vista>h3{margin:1.75rem 0 .5rem}
+.lienzo{position:relative;height:320px}
+.tenue{color:var(--tinta-2);font-size:.83rem}
+.num{text-align:right;white-space:nowrap}
+.mas{color:var(--entra)} .menos{color:var(--sale)}
+
+/* ---- Tablas ---- */
+.tabla{overflow-x:auto;border:1px solid var(--renglon);border-radius:var(--radio);background:var(--papel)}
 table{border-collapse:collapse;width:100%;min-width:980px}
-th,td{padding:.45rem .6rem;border-bottom:1px solid var(--renglon);text-align:left;vertical-align:middle}
-th{font-size:.8rem;font-weight:600;color:var(--tinta-2);background:var(--fondo);position:sticky;top:0}
-td.monto{text-align:right;white-space:nowrap;font-weight:500}
+th,td{padding:.6rem .75rem;border-bottom:1px solid var(--renglon);text-align:left;vertical-align:middle}
+tbody tr:last-child td{border-bottom:0}
+th{font-size:.72rem;font-weight:600;color:var(--tinta-3);text-transform:uppercase;letter-spacing:.05em;background:var(--papel-2);position:sticky;top:0}
+tbody tr:hover td{background:var(--papel-2)}
+.panel table,.panel .tabla table{min-width:0}
+.panel .tabla{border:0;border-radius:0}
+.mini td,.mini th{padding:.5rem .4rem;font-size:.9rem}
+.mini td:first-child{padding-left:0} .mini td:last-child{padding-right:0}
+td.monto{text-align:right;white-space:nowrap;font-weight:600}
 td.monto.mas{color:var(--entra)} td.monto.menos{color:var(--sale)}
-td.d{max-width:300px}
+td.d{min-width:240px;max-width:380px}
 td.d small{display:block;color:var(--tinta-2)}
-td select{max-width:190px;padding:.3rem .4rem}
+td select{max-width:190px;padding:.3rem .45rem;min-height:2rem}
 tr.sin td{background:var(--error)}
 tr.sug td{background:var(--aviso)}
 .estado{font-size:.75rem;color:var(--tinta-2);white-space:nowrap}
-.filtro{display:flex;align-items:center;gap:.5rem;font-size:.875rem;color:var(--tinta-2);margin:0 0 .5rem}
-#pie{position:sticky;bottom:0;background:var(--fondo);border-top:2px solid var(--tinta);margin-top:2rem;padding:1rem 0;display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between}
-#pie .resumen{font-size:.95rem}
-@media (max-width:640px){header{flex-direction:column;align-items:flex-start;gap:.25rem}main{padding:1rem}.ecuacion .res{margin-left:0;width:100%}}
-@media (prefers-reduced-motion:no-preference){.ecuacion{transition:border-color .3s}}
+.chip{display:inline-block;font-size:.7rem;font-weight:600;letter-spacing:.02em;color:var(--marca);background:var(--marca-2);border-radius:999px;padding:.05rem .5rem;margin-top:.2rem}
 
-/* ---- Navegación y tableros ---- */
-nav#menu{display:flex;gap:.25rem;flex-wrap:wrap}
-nav#menu a{color:var(--tinta-2);text-decoration:none;padding:.35rem .7rem;border-radius:3px;font-weight:500;font-size:.95rem}
-nav#menu a.activo{color:var(--tinta);background:var(--papel);box-shadow:inset 0 -3px 0 var(--laton)}
-.vista>h2{font-size:1.35rem;margin:.25rem 0 1rem}
-.cifras{display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:1rem;margin-bottom:1.5rem}
-.cifra{background:var(--papel);border:1px solid var(--renglon);border-radius:4px;padding:1rem 1.1rem}
-.cifra .lbl{font-size:.85rem;color:var(--tinta-2)}
-.cifra .val{font-size:1.5rem;font-weight:700;margin-top:.15rem}
-.cifra .sub{font-size:.8rem;color:var(--tinta-2);margin-top:.2rem}
-.cifra.total{border-left:5px solid var(--laton)}
-.dos{display:grid;grid-template-columns:1fr 1fr;gap:1.5rem}
-@media (max-width:860px){.dos{grid-template-columns:1fr}}
-.panel{background:var(--papel);border:1px solid var(--renglon);border-radius:4px;padding:1rem 1.1rem;margin-bottom:1.5rem}
-.panel h3{margin:0 0 .75rem;font-size:1rem}
-.panel table{min-width:0}
-.mini td,.mini th{padding:.35rem .5rem;font-size:.9rem}
-.num{text-align:right;white-space:nowrap}
-.mas{color:var(--entra)} .menos{color:var(--sale)}
-.tenue{color:var(--tinta-2);font-size:.85rem}
-.barra-filtros{display:flex;flex-wrap:wrap;gap:.75rem;align-items:center;margin-bottom:1rem}
-.form-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:.25rem 1rem;align-items:end}
-.form-grid label{margin:.5rem 0 .2rem}
-.form-grid input,.form-grid select{width:100%}
-.form-grid .acciones{display:flex;gap:.75rem;align-items:center;margin-top:.75rem;grid-column:1/-1}
-.saldo-in{width:10rem;text-align:right}
-.alterna{display:inline-flex;border:1px solid var(--renglon);border-radius:3px;overflow:hidden}
-.alterna button{border:0;border-radius:0;background:transparent;color:var(--tinta-2);padding:.45rem .9rem;font-weight:500}
-.alterna button.activo{background:var(--tinta);color:var(--papel)}
-.lienzo{position:relative;height:320px}
-td.d{min-width:260px;max-width:380px}
+/* ---- Mensajes ---- */
+.msg{margin:1rem 0;padding:.8rem 1rem;border-radius:var(--radio);border:1px solid;font-size:.92rem}
+.msg.error{background:var(--error);border-color:var(--error-borde)}
+.msg.ok{background:var(--ok);border-color:var(--ok-borde)}
+.msg.info{background:var(--aviso);border-color:var(--aviso-borde)}
+
+/* ---- Ingreso ---- */
+#login{max-width:400px;margin:9vh auto;background:var(--papel);border:1px solid var(--renglon);border-radius:14px;padding:2rem;box-shadow:0 10px 30px rgba(20,35,28,.08)}
+#login .marca{padding:0 0 1.5rem}
+#login h2{font-size:1.25rem;margin:0 0 .25rem}
+#login input{width:100%}
+#login button{margin-top:1.4rem;width:100%;padding:.65rem}
+
+/* ---- Importador ---- */
+#soltar{border:2px dashed var(--renglon);border-radius:var(--radio);padding:2.75rem 1.5rem;text-align:center;background:var(--papel);transition:border-color .15s,background .15s}
+#soltar.encima{border-color:var(--marca);background:var(--marca-2)}
+#soltar p{margin:.25rem 0}
+#soltar .chico{color:var(--tinta-2);font-size:.86rem}
+section.bloque{margin-top:2rem}
+.cabecera{display:flex;flex-wrap:wrap;align-items:center;gap:.75rem 1.25rem;margin-bottom:.75rem}
+.cabecera h2{margin:0;font-size:1.1rem}
+.cabecera .desc{color:var(--tinta-2);font-size:.86rem}
+.plasticos{background:var(--aviso);border:1px solid var(--aviso-borde);border-radius:var(--radio);padding:.7rem 1rem;margin-bottom:.75rem;display:flex;flex-wrap:wrap;gap:.5rem 1.5rem;align-items:center}
+.plasticos p{margin:0;width:100%;font-size:.86rem}
+.plasticos label{margin:0;display:flex;gap:.5rem;align-items:center}
+/* La ecuación de conciliación */
+.ecuacion{display:flex;flex-wrap:wrap;align-items:baseline;gap:.4rem .9rem;padding:.95rem 1.15rem;border:1px solid var(--error-borde);border-left:5px solid var(--sale);background:var(--papel);margin:.5rem 0 1rem;border-radius:var(--radio)}
+.ecuacion.cierra{border-color:var(--ok-borde);border-left-color:var(--entra)}
+.ecuacion .n{font-size:1.2rem;font-weight:650}
+.ecuacion .op{color:var(--tinta-3);font-size:1.2rem}
+.ecuacion .lbl{display:block;font-size:.72rem;color:var(--tinta-3);text-transform:uppercase;letter-spacing:.05em}
+.ecuacion .res{margin-left:auto;font-weight:650}
+#pie{position:sticky;bottom:0;background:var(--papel);border:1px solid var(--renglon);border-radius:var(--radio);box-shadow:0 -4px 16px rgba(20,35,28,.06);margin-top:1.5rem;padding:.9rem 1.1rem;display:flex;flex-wrap:wrap;gap:1rem;align-items:center;justify-content:space-between}
+#pie .resumen{font-size:.92rem}
+
+/* ---- Celular: la barra lateral pasa a ser una barra superior ---- */
+@media (max-width:900px){
+  .marco{flex-direction:column}
+  #menu{width:auto;height:auto;position:sticky;top:0;z-index:5;flex-direction:row;align-items:center;gap:.5rem;padding:.55rem .75rem;border-right:0;border-bottom:1px solid var(--renglon)}
+  #menu .marca{padding:0;flex:none}
+  #menu .marca span{display:none}
+  #menu nav{flex-direction:row;overflow-x:auto;scrollbar-width:none;gap:2px}
+  #menu nav::-webkit-scrollbar{display:none}
+  #menu nav a{white-space:nowrap;padding:.45rem .65rem;font-size:.88rem}
+  #menu nav a svg{display:none}
+  #menu .sep,#menu .pie-menu{display:none}
+  main{padding:1.25rem 1rem 2.5rem}
+  .dos{grid-template-columns:1fr}
+  .cifra .val{font-size:1.35rem}
+  .ecuacion .res{margin-left:0;width:100%}
+}
+@media (prefers-reduced-motion:no-preference){.ecuacion{transition:border-color .3s}}
 </style>
 </head>
 <body>
-<header>
-  <h1>Family Office</h1>
-  <nav id="menu" class="oculto" aria-label="Secciones">
-    <a href="#hoy">Hoy</a><a href="#mes">El mes</a><a href="#viene">Lo que viene</a>
-    <a href="#patrimonio">Patrimonio</a><a href="#pendientes">Pendientes</a>
-    <a href="#efectivo">Efectivo</a><a href="#importar">Importar</a><a href="#rubros">Rubros y reglas</a>
+<div class="marco">
+<aside id="menu" class="oculto" aria-label="Secciones">
+  <div class="marca"><div class="logo">FO</div><span>Family Office<small>Finanzas familiares</small></span></div>
+  <nav>
+    <a href="#hoy"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 11l9-7 9 7"/><path d="M5 10v10h14V10"/></svg>Hoy</a>
+    <a href="#mes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 20V10"/><path d="M10 20V4"/><path d="M16 20v-7"/><path d="M22 20H2"/></svg>El mes</a>
+    <a href="#viene"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M16 3v4M8 3v4M3 11h18"/></svg>Lo que viene</a>
+    <a href="#patrimonio"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M3 21h18"/><path d="M5 21V9l7-5 7 5v12"/><path d="M9 21v-6h6v6"/></svg>Patrimonio</a>
+    <a href="#pendientes"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M9 11l3 3 8-8"/><path d="M20 12v7a2 2 0 01-2 2H6a2 2 0 01-2-2V5a2 2 0 012-2h9"/></svg>Pendientes</a>
+    <a href="#efectivo"><svg viewBox="0 0 24 24" aria-hidden="true"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="2.5"/></svg>Efectivo</a>
+    <div class="sep"></div>
+    <a href="#importar"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><path d="M5 21h14"/></svg>Importar</a>
+    <a href="#rubros"><svg viewBox="0 0 24 24" aria-hidden="true"><path d="M4 6h16M4 12h10M4 18h7"/></svg>Rubros y reglas</a>
   </nav>
-  <span id="usuario"></span>
-</header>
+  <div class="pie-menu"><span id="usuario"></span><button type="button" id="btnSalir">Cerrar sesión</button></div>
+</aside>
 
 <main>
   <!-- Ingreso -->
-  <div id="login" class="caja oculto">
-    <h2 style="margin-top:0">Ingresar</h2>
+  <div id="login" class="oculto">
+    <div class="marca"><div class="logo">FO</div><span>Family Office<small>Finanzas familiares</small></span></div>
+    <h2>Ingresar</h2>
     <form id="formLogin">
       <label for="email">Email</label>
       <input id="email" type="email" autocomplete="username" required>
@@ -142,8 +208,8 @@ td.d{min-width:260px;max-width:380px}
   </div>
 
   <div id="app" class="oculto">
-  <section class="vista" id="v-hoy"><h2>Hoy</h2><div id="hoy-c"></div></section>
-  <section class="vista oculto" id="v-mes"><h2>El mes</h2>
+  <section class="vista" id="v-hoy"><h2>Hoy</h2><p class="bajada">Cuánto hay, cuánto se debe y qué se movió</p><div id="hoy-c"></div></section>
+  <section class="vista oculto" id="v-mes"><h2>El mes</h2><p class="bajada">En qué se fue la plata y quién la gastó</p>
     <div class="barra-filtros" id="filtrosMes"><label for="mesSel" style="margin:0">Hasta el mes</label><input type="month" id="mesSel">
       <select id="fPeriodo" aria-label="Período"><option value="1">1 mes</option><option value="3">3 meses</option><option value="6">6 meses</option><option value="12">12 meses</option></select>
       <select id="fPersona" aria-label="Quién pagó"></select><select id="fPara" aria-label="Para quién"></select>
@@ -151,13 +217,13 @@ td.d{min-width:260px;max-width:380px}
       <select id="fMedio" aria-label="Medio de pago"><option value="">Todo medio de pago</option><option value="tarjeta">Tarjetas</option><option value="cuenta">Cuentas bancarias</option><option value="billetera">Billeteras</option><option value="efectivo">Efectivo</option></select>
       <select id="fMoneda" aria-label="Moneda"><option value="">Toda moneda</option><option value="ARS">Pesos</option><option value="USD">Dólares</option></select></div>
     <div id="mes-c"></div></section>
-  <section class="vista oculto" id="v-viene"><h2>Lo que viene</h2><div id="viene-c"></div></section>
-  <section class="vista oculto" id="v-patrimonio"><h2>Patrimonio</h2><div id="pat-c"></div></section>
-  <section class="vista oculto" id="v-pendientes"><h2>Pendientes</h2><div id="pend-c"></div></section>
-  <section class="vista oculto" id="v-efectivo"><h2>Efectivo</h2><div id="efe-c"></div></section>
-  <section class="vista oculto" id="v-rubros"><h2>Rubros y reglas</h2><div id="rub-c"></div></section>
+  <section class="vista oculto" id="v-viene"><h2>Lo que viene</h2><p class="bajada">Vencimientos, cuotas y saldo proyectado</p><div id="viene-c"></div></section>
+  <section class="vista oculto" id="v-patrimonio"><h2>Patrimonio</h2><p class="bajada">Bienes, inversiones y deudas, en dólares</p><div id="pat-c"></div></section>
+  <section class="vista oculto" id="v-pendientes"><h2>Pendientes</h2><p class="bajada">Lo que falta clasificar, confirmar o emparejar</p><div id="pend-c"></div></section>
+  <section class="vista oculto" id="v-efectivo"><h2>Efectivo</h2><p class="bajada">Cajas, gastos en efectivo y arqueos</p><div id="efe-c"></div></section>
+  <section class="vista oculto" id="v-rubros"><h2>Rubros y reglas</h2><p class="bajada">Cómo se clasifica cada movimiento</p><div id="rub-c"></div></section>
   <!-- Importación -->
-  <section class="vista oculto" id="v-importar"><h2>Importar resumen</h2>
+  <section class="vista oculto" id="v-importar"><h2>Importar</h2><p class="bajada">Resúmenes en PDF de bancos, tarjetas y billeteras</p>
     <div id="bandeja"></div>
     <div id="soltar">
       <p><strong>Arrastra acá el PDF de un resumen</strong></p>
@@ -177,6 +243,7 @@ td.d{min-width:260px;max-width:380px}
   </section>
   </div>
 </main>
+</div>
 
 <script type="module">
   import * as pdfjsLib from "./vendor/pdfjs-dist@4.10.38/pdf.min.mjs";
@@ -217,6 +284,7 @@ async function iniciar() {
 }
 
 function mostrarLogin() { $("login").classList.remove("oculto"); $("app").classList.add("oculto"); }
+$("btnSalir").onclick = async () => { await sb.auth.signOut(); location.hash = ""; location.reload(); };
 
 $("formLogin").addEventListener("submit", async (e) => {
   e.preventDefault();
@@ -635,8 +703,8 @@ async function verBandeja() {
   const { data, error } = await sb.from("bandeja").select("*").in("estado", ["pendiente", "revisar"]).order("recibido", { ascending: false });
   if (error) return ($("bandeja").innerHTML = "");
   $("bandeja").innerHTML = data.length ? `<div class="panel"><h3>Llegaron por mail (${data.length})</h3><table class="mini"><tbody>
-    ${data.map((b) => `<tr data-bandeja="${b.id}"><td>${dm(b.recibido?.slice(0, 10))}</td><td>${esc(b.nombre ?? "PDF")}<div class="tenue">${esc(b.asunto ?? "")}${b.nota ? ` · ${esc(b.nota)}` : b.estado === "pendiente" ? " · Se procesa solo" : ""}</div></td>
-      <td style="white-space:nowrap"><button class="sec" data-abrir type="button">Abrir</button> <button class="sec" data-descartar-pdf type="button">Descartar</button></td></tr>`).join("")}
+    ${data.map((b) => `<tr data-bandeja="${b.id}"><td style="width:3.5rem">${dm(b.recibido?.slice(0, 10))}</td><td><strong>${esc(b.nombre ?? "PDF")}</strong><div class="tenue">${esc(b.asunto ?? "")}${b.nota ? ` · ${esc(b.nota)}` : b.estado === "pendiente" ? " · Se procesa solo" : ""}</div>
+      <div style="display:flex;gap:.5rem;margin-top:.5rem"><button class="sec" data-abrir type="button">Abrir</button><button class="sec" data-descartar-pdf type="button">Descartar</button></div></td></tr>`).join("")}
     </tbody></table></div>` : "";
   $("bandeja").querySelectorAll("[data-abrir]").forEach((b) => b.onclick = async () => {
     const item = data.find((x) => x.id === +b.closest("tr").dataset.bandeja);
@@ -659,8 +727,9 @@ function limpiar() { estado = null; $("bloques").innerHTML = ""; $("pie").classL
 // TABLEROS
 // =====================================================================
 const fmt0 = new Intl.NumberFormat("es-AR", { maximumFractionDigits: 0 });
-const pesos = (n) => "$ " + fmt0.format(Math.round(n || 0));
-const dolares = (n) => "US$ " + fmt0.format(Math.round(n || 0));
+const conSigno = (simbolo, n) => { const r = Math.round(n || 0); return (r < 0 ? "−" : "") + simbolo + " " + fmt0.format(Math.abs(r)); };
+const pesos = (n) => conSigno("$", n);
+const dolares = (n) => conSigno("US$", n);
 const conMoneda = (n, mon) => (mon === "USD" ? dolares(n) : pesos(n));
 const dm = (f) => f ? f.slice(8, 10) + "/" + f.slice(5, 7) : "";
 const hoyISO = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
@@ -735,6 +804,12 @@ function cifra(lbl, val, sub = "", clase = "") {
 }
 
 function grafico(id, config) {
+  // Estilo común: tipografía de la app, textos tenues y grilla suave
+  Chart.defaults.font.family = css("--font");
+  Chart.defaults.color = css("--tinta-2");
+  Chart.defaults.borderColor = css("--renglon");
+  Chart.defaults.plugins.legend.labels.boxWidth = 12;
+  Chart.defaults.plugins.legend.labels.boxHeight = 12;
   if (graficos[id]) graficos[id].destroy();
   graficos[id] = new Chart(document.getElementById(id), config);
 }
@@ -811,7 +886,7 @@ async function verHoy() {
         s.fuente === "informado" ? `Informado el ${dm(s.confirmado_al)}${mas}${sinExplicar}`
         : s.fuente === "arqueo" ? `Arqueo del ${dm(s.confirmado_al)}${mas}`
         : mas ? `Estimado: confirmado al ${dm(s.confirmado_al)}${mas}` : `Confirmado al ${dm(s.confirmado_al)}`);
-      return `<tr><td>${esc(s.alias)}</td><td class="num ${s.saldo_estimado < 0 ? "menos" : ""}">${conMoneda(s.saldo_estimado, s.moneda)}</td><td class="tenue">${estado}</td></tr>`;
+      return `<tr><td>${esc(s.alias)}<div class="tenue">${estado}</div></td><td class="num ${s.saldo_estimado < 0 ? "menos" : ""}">${conMoneda(s.saldo_estimado, s.moneda)}</td></tr>`;
     };
 
     $("hoy-c").innerHTML = `
@@ -832,7 +907,7 @@ async function verHoy() {
         <div class="panel"><h3>Saldos por cuenta</h3><div class="tabla" style="border:0"><table class="mini">
           <tbody>${liq.map(filaSaldo).join("")}${tar.map(filaSaldo).join("")}</tbody></table></div></div>
         <div class="panel"><h3>Últimos movimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
-          ${(ult || []).map((m) => `<tr><td>${dm(m.fecha)}</td><td>${esc(m.descripcion_original).slice(0, 48)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${esc(rubroDe(m.rubro_id)?.nombre ?? "Sin clasificar")}${m.origen === "mail" ? " · por mail" : ""}</div></td>
+          ${(ult || []).map((m) => `<tr><td>${dm(m.fecha)}</td><td>${esc(m.descripcion_original).slice(0, 48)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${esc(rubroDe(m.rubro_id)?.nombre ?? "Sin clasificar")}</div>${m.origen === "mail" ? `<span class="chip">por mail</span>` : ""}</td>
             <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td></tr>`).join("")}
         </tbody></table></div></div>
       </div>`;
@@ -980,8 +1055,8 @@ async function verMes() {
     grafico("gMes", {
       type: "bar",
       data: { labels: grupos.map((g) => g[0]), datasets: [
-        { label: "Recurrente", data: grupos.map((g) => Math.round(g[1].rec)), backgroundColor: css("--tinta") },
-        { label: "Extraordinario", data: grupos.map((g) => Math.round(g[1].ext)), backgroundColor: css("--laton") } ] },
+        { label: "Recurrente", data: grupos.map((g) => Math.round(g[1].rec)), backgroundColor: css("--marca"), borderRadius: 4, maxBarThickness: 26 },
+        { label: "Extraordinario", data: grupos.map((g) => Math.round(g[1].ext)), backgroundColor: css("--laton"), borderRadius: 4, maxBarThickness: 26 } ] },
       options: { indexAxis: "y", maintainAspectRatio: false, scales: { x: { stacked: true, ticks: { callback: (v) => pesos(v) } }, y: { stacked: true } },
                  plugins: { tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${pesos(c.raw)}` } } } },
     });
@@ -1105,7 +1180,7 @@ async function verViene() {
       type: "line",
       data: { labels: [dm(hoy), ...filas.map((f) => dm(f.fecha))],
               datasets: [{ label: "Saldo proyectado", data: [inicial, ...filas.map((f) => Math.round(f.saldo))],
-                           borderColor: css("--laton"), backgroundColor: css("--laton"), stepped: true, pointRadius: 3 }] },
+                           borderColor: css("--marca"), backgroundColor: css("--marca"), stepped: true, pointRadius: 3, borderWidth: 2 }] },
       options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => pesos(c.raw) } } },
                  scales: { y: { ticks: { callback: (v) => pesos(v) } } } },
     });
@@ -1221,18 +1296,20 @@ async function verPatrimonio() {
       <p class="tenue" style="margin-top:0">Últimos 12 meses de movimientos asignados a cada activo. El resultado económico no incluye la amortización de capital (es ahorro); el neto en caja sí.</p>
       <div class="dos">${fichas.map(ficha).join("") || `<div class="tenue">No hay inmuebles ni vehículos cargados.</div>`}</div>
 
-      <div class="panel"><h3>Inversiones</h3>
+      <div class="panel"><h3>Inversiones y alta de bienes</h3>
         <table class="mini"><tbody>
           ${inversiones.map((a) => `<tr data-activo="${a.id}"><td>${esc(a.nombre)}<div class="tenue">${esc(SUBTIPOS[a.subtipo] ?? "Inversión")}${a.fecha_vencimiento ? `, vence ${dm(a.fecha_vencimiento)}` : ""}${a.tna ? `, TNA ${a.tna}%` : ""}</div></td>
             <td class="num">${a.valor == null ? "—" : conMoneda(a.valor, a.moneda)}<div class="tenue">${rinde(a)}</div></td>
             <td><button class="sec" data-valuar="${a.id}" type="button">Actualizar valor</button></td></tr>`).join("") || `<tr><td class="tenue">Todavía no cargaste inversiones.</td></tr>`}
         </tbody></table>
-        <details style="margin-top:.75rem"><summary>Agregar una inversión</summary>
+        <details style="margin-top:.75rem" id="altaBien"><summary>Agregar un bien o una inversión</summary>
           <div class="form-grid">
-            <div><label for="invNombre">Nombre</label><input id="invNombre" type="text" placeholder="Plazo fijo Banco X, FCI Ahorro…"></div>
-            <div><label for="invTipo">Tipo</label><select id="invTipo">${Object.entries(SUBTIPOS).map(([k, x]) => `<option value="${k}">${x}</option>`).join("")}</select></div>
+            <div><label for="invNombre">Nombre</label><input id="invNombre" type="text" placeholder="Casa de la costa, Camioneta, Plazo fijo Banco X…"></div>
+            <div><label for="invTipo">Tipo</label><select id="invTipo">
+              <optgroup label="Bienes"><option value="b:inmueble">Inmueble</option><option value="b:vehiculo">Vehículo</option><option value="b:otro">Otro bien</option></optgroup>
+              <optgroup label="Inversiones">${Object.entries(SUBTIPOS).map(([k, x]) => `<option value="${k}">${x}</option>`).join("")}</optgroup></select></div>
             <div><label for="invMoneda">Moneda</label><select id="invMoneda"><option value="ARS">Pesos</option><option value="USD">Dólares</option></select></div>
-            <div><label for="invMonto">Valor actual (o capital)</label><input id="invMonto" type="text" inputmode="decimal"></div>
+            <div><label for="invMonto">Valor actual (o capital del plazo fijo)</label><input id="invMonto" type="text" inputmode="decimal"></div>
             <div class="pf"><label for="invTna">TNA %</label><input id="invTna" type="text" inputmode="decimal"></div>
             <div class="pf"><label for="invIni">Constituido el</label><input id="invIni" type="date" value="${hoy}"></div>
             <div class="pf"><label for="invVto">Vence el</label><input id="invVto" type="date"></div>
@@ -1266,17 +1343,22 @@ async function verPatrimonio() {
       if (error) return alert(error.message);
       verPatrimonio();
     };
-    const mostrarPf = () => $("pat-c").querySelectorAll(".pf").forEach((x) => x.classList.toggle("oculto", $("invTipo").value !== "plazo_fijo"));
+    const mostrarPf = () => {
+      $("pat-c").querySelectorAll(".pf").forEach((x) => x.classList.toggle("oculto", $("invTipo").value !== "plazo_fijo"));
+      if ($("invTipo").value.startsWith("b:")) $("invMoneda").value = "USD";
+    };
     $("invTipo").onchange = mostrarPf; mostrarPf();
     $("invGuardar").onclick = async () => {
-      const nombre = $("invNombre").value.trim(), monto = numeroAR($("invMonto").value), sub = $("invTipo").value, mon = $("invMoneda").value;
+      const nombre = $("invNombre").value.trim(), monto = numeroAR($("invMonto").value), tipoSel = $("invTipo").value, mon = $("invMoneda").value;
       if (!nombre || !monto) return ($("invMsg").textContent = "Completa el nombre y el valor.");
+      const bien = tipoSel.startsWith("b:"), sub = bien ? null : tipoSel;
       const pf = sub === "plazo_fijo", tna = numeroAR($("invTna").value);
       if (pf && (!tna || !$("invVto").value)) return ($("invMsg").textContent = "En un plazo fijo completa la TNA y el vencimiento.");
-      const { data: a, error } = await sb.from("activos").insert({ nombre, tipo: "inversion", subtipo: sub, moneda: mon,
+      const { data: a, error } = await sb.from("activos").insert({ nombre, tipo: bien ? tipoSel.slice(2) : "inversion", subtipo: sub, moneda: mon,
         capital: pf ? monto : null, tna: pf ? tna : null, fecha_inicio: pf ? $("invIni").value : null, fecha_vencimiento: pf ? $("invVto").value : null }).select().single();
       if (error) return ($("invMsg").textContent = error.message.includes("duplicate") ? "Ya hay un activo con ese nombre." : error.message);
-      await sb.from("valuaciones").insert({ activo_id: a.id, fecha: pf ? $("invIni").value : hoyISO(), valor_min: monto, valor_max: monto, moneda: mon, fuente: "carga inicial" });
+      await sb.from("valuaciones").insert({ activo_id: a.id, fecha: pf ? $("invIni").value : hoyISO(), valor_min: monto, valor_max: monto, moneda: mon,
+        fuente: bien ? "estimación propia" : "carga inicial" });
       if (pf) await sb.from("compromisos").insert({ descripcion: `Vence ${nombre}`, tipo: "otro", activo_id: a.id, moneda: mon, indexacion: "ninguna",
         frecuencia: "unica", fecha_proxima: a.fecha_vencimiento, monto: Math.round(devengado(a, a.fecha_vencimiento) * 100) / 100 });
       await cargarReferencias(); verPatrimonio();
@@ -1365,7 +1447,7 @@ async function verPendientes() {
       </div>
       <div class="panel"><h3>Para revisar</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
         ${revisar.data.map((m) => `<tr data-id="${m.id}"><td>${dm(m.fecha)}</td>
-          <td class="d">${esc(m.descripcion_original)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${m.rubro_id ? esc(rubroDe(m.rubro_id)?.nombre) + " (" + m.confianza + ")" : "Sin clasificar"}${m.origen === "mail" ? " · por mail, se confirma con el resumen" : ""}${m.notas ? `<br>${esc(m.notas)}` : ""}</div></td>
+          <td class="d">${esc(m.descripcion_original)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${m.rubro_id ? esc(rubroDe(m.rubro_id)?.nombre) + " (" + m.confianza + ")" : "Sin clasificar"}${m.origen === "mail" ? ` <span class="chip" title="Se confirma cuando importes el resumen">por mail</span>` : ""}${m.notas ? `<br>${esc(m.notas)}` : ""}</div></td>
           <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td>
           <td><select aria-label="Rubro">${opcionesRubro(m.rubro_id)}</select></td>
           <td style="white-space:nowrap"><button class="sec" data-confirmar type="button">Confirmar</button>
@@ -1434,7 +1516,7 @@ async function verPendientes() {
 }
 
 // ---------------- EFECTIVO ----------------
-async function verEfectivo() {
+async function verEfectivo(aviso = "") {
   try {
     const cajas = ref.cuentas.filter((c) => c.tipo === "caja_efectivo" && c.activa);
     if (!cajas.length) { $("efe-c").innerHTML = `<div class="msg info">No hay cajas de efectivo cargadas.</div>`; return; }
@@ -1450,7 +1532,7 @@ async function verEfectivo() {
     const personas = ref.personas.filter((x) => x.tipo !== "empresa");
     const opcCajas = cajas.map((c) => `<option value="${c.id}">${esc(c.alias)}</option>`).join("");
 
-    $("efe-c").innerHTML = `
+    $("efe-c").innerHTML = `${aviso}
       <div class="cifras">${cajas.map((c) => {
         const s = ss.find((x) => x.cuenta_id === c.id), a = arq.data.find((x) => x.cuenta_id === c.id);
         return cifra(esc(c.alias), s ? conMoneda(s.saldo_estimado, c.moneda) : "—",
@@ -1495,15 +1577,21 @@ async function verEfectivo() {
       const n = numeroAR($("efMonto").value), caja = cuentaDe(+$("efCaja").value);
       if (!n) return ($("efMsg").textContent = "Escribe el monto.");
       if (!$("efRubro").value) return ($("efMsg").textContent = "Elige un rubro.");
-      const val = (id) => ($(id).value ? +$(id).value : null);
+      const val = (id) => ($(id).value ? +$(id).value : null), fecha = $("efFecha").value || hoyISO();
       const { error } = await sb.from("movimientos").insert({
-        cuenta_id: caja.id, fecha: $("efFecha").value || hoyISO(), moneda: caja.moneda, monto: signo * Math.abs(n),
+        cuenta_id: caja.id, fecha, moneda: caja.moneda, monto: signo * Math.abs(n),
         descripcion_original: $("efDesc").value.trim() || (signo < 0 ? "Gasto en efectivo" : "Ingreso en efectivo"),
         rubro_id: val("efRubro"), persona_id: val("efQuien"), beneficiario_id: val("efPara"), activo_id: val("efActivo"),
         origen: "manual", confianza: "confirmado", estado_conciliacion: "no_aplica", id_externo: "manual:" + crypto.randomUUID(),
       });
-      if (error) return ($("efMsg").textContent = error.message);
-      verEfectivo();
+      if (error) return ($("efMsg").innerHTML = `<span class="menos">No se pudo anotar: ${esc(error.message)}</span>`);
+      // El saldo de la caja parte del último arqueo: lo anotado antes de esa fecha queda en el historial y en los
+      // análisis, pero no cambia el saldo (ya estaba incluido en lo que se contó)
+      const base = ss.find((x) => x.cuenta_id === caja.id);
+      const que = `${signo < 0 ? "Gasto" : "Ingreso"} de ${conMoneda(Math.abs(n), caja.moneda)} del ${dm(fecha)} anotado en ${esc(caja.alias)}.`;
+      verEfectivo(`<div class="msg ${base && fecha <= base.confirmado_al ? "info" : "ok"}">${que}${
+        !base ? " La caja todavía no tiene arqueo: el saldo se va a ver cuando hagas el primero."
+        : fecha <= base.confirmado_al ? ` Es anterior o igual al último arqueo (${dm(base.confirmado_al)}), así que no cambia el saldo de la caja: ya estaba incluido en lo que contaste. Sí cuenta en El mes y en los análisis.` : ""}</div>`);
     };
     $("arGuardar").onclick = async () => {
       const n = numeroAR($("arMonto").value);
