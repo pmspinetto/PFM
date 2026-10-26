@@ -158,6 +158,7 @@ td.d{min-width:260px;max-width:380px}
   <section class="vista oculto" id="v-rubros"><h2>Rubros y reglas</h2><div id="rub-c"></div></section>
   <!-- Importación -->
   <section class="vista oculto" id="v-importar"><h2>Importar resumen</h2>
+    <div id="bandeja"></div>
     <div id="soltar">
       <p><strong>Arrastra acá el PDF de un resumen</strong></p>
       <p class="chico">Santander (cuenta y Visa), Macro (cuenta, Visa y Amex), BBVA (cuenta, Visa y Mastercard), Ciudad o Mercado Pago</p>
@@ -212,6 +213,7 @@ async function iniciar() {
   $("menu").classList.remove("oculto");
   await cargarReferencias();
   await iniciarTableros();
+  procesarBandeja().then(() => vistaActual() === "importar" && verBandeja());
 }
 
 function mostrarLogin() { $("login").classList.remove("oculto"); $("app").classList.add("oculto"); }
@@ -270,24 +272,29 @@ zona.addEventListener("drop", (e) => {
   if (f && f.type === "application/pdf") leerPdf(f); else mensaje("error", "El archivo tiene que ser un PDF.");
 });
 
-async function leerPdf(file) {
+// Lee un PDF y arma el estado de importación. Si `pedirClave` es falso y el PDF tiene clave, falla.
+async function leerArchivo(buf, pedirClave = true) {
+  const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))]
+    .map((b) => b.toString(16).padStart(2, "0")).join("");
+  let data, clave;
+  for (;;) {
+    try { data = await window.leerResumenLocal(buf.slice(0), clave); break; }
+    catch (err) {
+      if (err?.name !== "PasswordException" || !pedirClave) throw err;
+      clave = prompt(clave ? "Clave incorrecta. Vuelve a ingresarla:" : "El PDF tiene clave (suele ser el DNI). Ingrésala:");
+      if (clave == null) throw new Error("Se canceló el ingreso de la clave.");
+    }
+  }
+  data.cuentas.forEach((c) => (c.cuenta_id = emparejarCuenta(c.identificador)));
+  return armarEstado(data, hash);
+}
+
+async function leerPdf(file, bandejaId = null) {
   limpiar();
   mensaje("info", `Leyendo ${esc(file.name)}…`);
   try {
-    const buf = await file.arrayBuffer();
-    const hash = [...new Uint8Array(await crypto.subtle.digest("SHA-256", buf))]
-      .map((b) => b.toString(16).padStart(2, "0")).join("");
-    let data, clave;
-    for (;;) {
-      try { data = await window.leerResumenLocal(buf.slice(0), clave); break; }
-      catch (err) {
-        if (err?.name !== "PasswordException") throw err;
-        clave = prompt(clave ? "Clave incorrecta. Vuelve a ingresarla:" : "El PDF tiene clave (suele ser el DNI). Ingrésala:");
-        if (clave == null) throw new Error("Se canceló el ingreso de la clave.");
-      }
-    }
-    data.cuentas.forEach((c) => (c.cuenta_id = emparejarCuenta(c.identificador)));
-    prepararEstado(data, hash);
+    estado = await leerArchivo(await file.arrayBuffer());
+    estado.bandejaId = bandejaId;
     mensaje("", "");
     dibujar();
   } catch (err) {
@@ -311,8 +318,8 @@ function emparejarCuenta(id) {
 }
 
 // ---------- Clasificación ----------
-function prepararEstado(data, hash) {
-  estado = {
+function armarEstado(data, hash) {
+  const est = {
     documento: data.documento, hash,
     bloques: data.cuentas.map((c) => {
       const usados = {};
@@ -329,8 +336,10 @@ function prepararEstado(data, hash) {
       };
     }),
   };
-  estado.bloques.forEach(asignarPersonas);
+  est.bloques.forEach(asignarPersonas);
+  return est;
 }
+function prepararEstado(data, hash) { estado = armarEstado(data, hash); }
 
 function normalizar(s) { return String(s || "").toLowerCase().replace(/\s+/g, " ").trim(); }
 
@@ -516,57 +525,131 @@ $("bloques").addEventListener("change", (e) => {
 $("btnDescartar").onclick = limpiar;
 
 // ---------- Guardado ----------
-$("btnGuardar").onclick = async () => {
-  $("btnGuardar").disabled = true;
-  mensaje("info", "Guardando…");
+// Guarda un estado de importación (lo usan el botón Guardar y la bandeja automática)
+async function guardarEstado(est) {
   const resultados = [];
-  try {
-    for (const b of estado.bloques) {
-      await registrarPlasticos(b);
-      const reglas = b.movs.filter((m) => m.recordar && m.rubro_id).map((m) => ({
-        patron: patronDesde(m.descripcion), rubro_id: m.rubro_id, activo_id: m.activo_id,
-        beneficiario_id: m.beneficiario_id, es_extraordinario: m.es_extraordinario || null, modo: "auto",
-      })).filter((r) => r.patron);
-      const payload = {
-        cuenta_id: b.cuenta_id,
-        documento: {
-          tipo: estado.documento.tipo,
-          periodo_desde: estado.documento.periodo_desde,
-          periodo_hasta: estado.documento.periodo_hasta,
-          hash: `${estado.hash}-${b.cuenta_id}`,
-          tarjeta: estado.documento.tarjeta ?? null,
-        },
-        identificador: b.identificador,
-        conciliar: b.conciliacion,
-        movimientos: b.movs.map((m) => ({
-          fecha: m.fecha, descripcion_original: m.descripcion, monto: m.monto, moneda: m.moneda,
-          tipo_cambio: m.tipo_cambio, rubro_id: m.rubro_id, persona_id: m.persona_id,
-          beneficiario_id: m.beneficiario_id, activo_id: m.activo_id, plastico_id: m.plastico_id,
-          es_extraordinario: m.es_extraordinario, cuota_nro: m.cuota_nro, cuotas_total: m.cuotas_total,
-          comprobante: m.comprobante, id_externo: m.id_externo, confianza: m.confianza, regla_id: m.regla_id ?? null,
-          partes: m.partes ?? [], prestamo: m.prestamo ?? null,
-        })),
-        reglas_nuevas: reglas,
-      };
-      const { data, error } = await sb.rpc("guardar_importacion", { p: payload });
-      if (error) throw new Error(`${ref.cuentas.find((c) => c.id === b.cuenta_id)?.alias}: ${error.message}`);
-      resultados.push({ alias: ref.cuentas.find((c) => c.id === b.cuenta_id).alias, ...data });
-    }
-    await cargarReferencias();
-    const txt = resultados.map((r) =>
+  for (const b of est.bloques) {
+    await registrarPlasticos(b);
+    const reglas = b.movs.filter((m) => m.recordar && m.rubro_id).map((m) => ({
+      patron: patronDesde(m.descripcion), rubro_id: m.rubro_id, activo_id: m.activo_id,
+      beneficiario_id: m.beneficiario_id, es_extraordinario: m.es_extraordinario || null, modo: "auto",
+    })).filter((r) => r.patron);
+    const payload = {
+      cuenta_id: b.cuenta_id,
+      documento: {
+        tipo: est.documento.tipo,
+        periodo_desde: est.documento.periodo_desde,
+        periodo_hasta: est.documento.periodo_hasta,
+        hash: `${est.hash}-${b.cuenta_id}`,
+        tarjeta: est.documento.tarjeta ?? null,
+      },
+      identificador: b.identificador,
+      conciliar: b.conciliacion,
+      movimientos: b.movs.map((m) => ({
+        fecha: m.fecha, descripcion_original: m.descripcion, monto: m.monto, moneda: m.moneda,
+        tipo_cambio: m.tipo_cambio, rubro_id: m.rubro_id, persona_id: m.persona_id,
+        beneficiario_id: m.beneficiario_id, activo_id: m.activo_id, plastico_id: m.plastico_id,
+        es_extraordinario: m.es_extraordinario, cuota_nro: m.cuota_nro, cuotas_total: m.cuotas_total,
+        comprobante: m.comprobante, id_externo: m.id_externo, confianza: m.confianza, regla_id: m.regla_id ?? null,
+        partes: m.partes ?? [], prestamo: m.prestamo ?? null,
+      })),
+      reglas_nuevas: reglas,
+    };
+    const { data, error } = await sb.rpc("guardar_importacion", { p: payload });
+    if (error) throw new Error(`${ref.cuentas.find((c) => c.id === b.cuenta_id)?.alias}: ${error.message}`);
+    resultados.push({ alias: ref.cuentas.find((c) => c.id === b.cuenta_id).alias, ...data });
+  }
+  await cargarReferencias();
+  return resultados;
+}
+const textoResultados = (resultados) => resultados.map((r) =>
       `${esc(r.alias)}: ${r.insertados} movimientos guardados` +
       (r.duplicados ? `, ${r.duplicados} ya existían` : "") +
       (r.emparejadas ? `, ${r.emparejadas} transferencias emparejadas` : "") +
       (r.absorbidos ? `, ${r.absorbidos} confirmaron avisos que habían llegado por mail` : "") +
       (r.sin_confirmar ? `, ${r.sin_confirmar} avisos por mail no aparecieron en el resumen (quedan en Pendientes)` : "")).join("<br>");
+
+$("btnGuardar").onclick = async () => {
+  $("btnGuardar").disabled = true;
+  mensaje("info", "Guardando…");
+  try {
+    const resultados = await guardarEstado(estado);
+    if (estado.bandejaId) await sb.from("bandeja").update({ estado: "importado", nota: null }).eq("id", estado.bandejaId);
+    const txt = textoResultados(resultados);
     estado = null;
     $("bloques").innerHTML = ""; $("pie").classList.add("oculto");
     mensaje("ok", "Resumen guardado.<br>" + txt);
+    verBandeja();
   } catch (err) {
     mensaje("error", "No se guardó nada de esta cuenta. " + esc(err.message));
     $("btnGuardar").disabled = false;
   }
 };
+
+// ---------- Bandeja: resúmenes que llegaron por mail ----------
+// Al entrar a la app se procesan solos los pendientes: se guardan si concilian, todas las cuentas
+// están identificadas y todo quedó clasificado por reglas confirmadas; si no, quedan para revisar.
+function listoParaGuardar(est) {
+  for (const b of est.bloques) {
+    if (!b.cuenta_id) return "No se reconoció la cuenta";
+    if (b.plasticosNuevos?.length) return "Tiene plásticos nuevos para asignar";
+    for (const c of b.conciliacion) {
+      const suma = b.movs.filter((m) => m.moneda === c.moneda).reduce((a, m) => a + Number(m.monto), 0);
+      if (Math.abs(Number(c.saldo_inicial) + suma - Number(c.saldo_final)) >= 0.01) return "No concilia";
+    }
+    const sin = b.movs.filter((m) => !m.rubro_id || m.origenClasif === "sug").length;
+    if (sin) return `${sin} movimientos sin clasificar o sugeridos`;
+  }
+  return null;
+}
+
+let bandejaCorriendo = false;
+async function procesarBandeja() {
+  if (bandejaCorriendo) return;
+  bandejaCorriendo = true;
+  try {
+    const { data } = await sb.from("bandeja").select("*").eq("estado", "pendiente").order("recibido");
+    for (const item of data ?? []) {
+      let nota;
+      try {
+        const { data: blob, error } = await sb.storage.from("bandeja").download(item.archivo_path);
+        if (error) throw error;
+        const est = await leerArchivo(await blob.arrayBuffer(), false);
+        nota = listoParaGuardar(est);
+        if (!nota) {
+          const res = await guardarEstado(est);
+          await sb.from("bandeja").update({ estado: "importado", nota: textoResultados(res).replace(/<br>/g, " · ") }).eq("id", item.id);
+          continue;
+        }
+      } catch (err) {
+        nota = err?.name === "PasswordException" ? "Tiene clave: ábrelo para ingresarla" : err?.message || "No se pudo leer el PDF";
+      }
+      await sb.from("bandeja").update({ estado: "revisar", nota }).eq("id", item.id);
+    }
+  } finally {
+    bandejaCorriendo = false;
+  }
+}
+
+async function verBandeja() {
+  const { data, error } = await sb.from("bandeja").select("*").in("estado", ["pendiente", "revisar"]).order("recibido", { ascending: false });
+  if (error) return ($("bandeja").innerHTML = "");
+  $("bandeja").innerHTML = data.length ? `<div class="panel"><h3>Llegaron por mail (${data.length})</h3><table class="mini"><tbody>
+    ${data.map((b) => `<tr data-bandeja="${b.id}"><td>${dm(b.recibido?.slice(0, 10))}</td><td>${esc(b.nombre ?? "PDF")}<div class="tenue">${esc(b.asunto ?? "")}${b.nota ? ` · ${esc(b.nota)}` : b.estado === "pendiente" ? " · Se procesa solo" : ""}</div></td>
+      <td style="white-space:nowrap"><button class="sec" data-abrir type="button">Abrir</button> <button class="sec" data-descartar-pdf type="button">Descartar</button></td></tr>`).join("")}
+    </tbody></table></div>` : "";
+  $("bandeja").querySelectorAll("[data-abrir]").forEach((b) => b.onclick = async () => {
+    const item = data.find((x) => x.id === +b.closest("tr").dataset.bandeja);
+    const { data: blob, error: e } = await sb.storage.from("bandeja").download(item.archivo_path);
+    if (e) return mensaje("error", esc(e.message));
+    leerPdf(new File([blob], item.nombre ?? "resumen.pdf", { type: "application/pdf" }), item.id);
+  });
+  $("bandeja").querySelectorAll("[data-descartar-pdf]").forEach((b) => b.onclick = async () => {
+    if (!confirm("¿Descartar este PDF de la bandeja?")) return;
+    await sb.from("bandeja").update({ estado: "descartado" }).eq("id", +b.closest("tr").dataset.bandeja);
+    verBandeja();
+  });
+}
 
 // ---------- Utilidades ----------
 function mensaje(tipo, html) { $("msg").innerHTML = html ? `<div class="msg ${tipo}">${html}</div>` : ""; }
@@ -600,7 +683,7 @@ const graficos = {};
 let tc = null;
 
 const VISTAS = { hoy: verHoy, mes: verMes, viene: verViene, patrimonio: verPatrimonio, pendientes: verPendientes,
-                 efectivo: verEfectivo, importar: null, rubros: verRubros };
+                 efectivo: verEfectivo, importar: verBandeja, rubros: verRubros };
 
 let tablerosListos = false;
 async function iniciarTableros() {

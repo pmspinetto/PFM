@@ -19,7 +19,10 @@
 // esa llamada diaria también mantiene activo el proyecto gratuito de Supabase.
 // =====================================================================
 
-var ETIQUETAS = ["fo/registrado", "fo/sospechoso", "fo/error"];
+// Los resúmenes que llegan con el PDF adjunto se suben a la carpeta privada "bandeja" de
+// Supabase y quedan en la bandeja de Importar (etiqueta fo/bandeja).
+
+var ETIQUETAS = ["fo/registrado", "fo/sospechoso", "fo/error", "fo/bandeja"];
 
 function procesarAvisos() {
   var props = PropertiesService.getScriptProperties();
@@ -46,6 +49,20 @@ function procesarAvisos() {
       revisados++;
       var etiqueta = null;
       try {
+        var pdfs = msg.getAttachments().filter(function (a) {
+          return a.getContentType() === "application/pdf" || /\.pdf$/i.test(a.getName());
+        });
+        if (pdfs.length) {
+          if (!Avisos.autentico(msg.getRawContent(), { redirectores: (cfg.REDIRECTORES || "").split(",") })) {
+            etiqueta = "fo/sospechoso";
+            console.warn("Adjunto de un remitente que no pasó la verificación: " + msg.getSubject());
+            return;
+          }
+          token = token || ingresar(cfg);
+          pdfs.forEach(function (a) { subirABandeja(cfg, token, msg, a); });
+          etiqueta = "fo/bandeja";
+          return;
+        }
         var aviso = Avisos.leer({ de: msg.getFrom(), asunto: msg.getSubject(), html: msg.getBody(), recibido: msg.getDate() });
         if (!aviso) return;                       // publicidad u otro mail del banco
         avisos++;
@@ -115,6 +132,26 @@ function actualizarDolar(cfg, props, obtenerToken, forzar) {
   var n = llamar(cfg, obtenerToken(), "rpc/registrar_tipos_cambio", { p: { cotizaciones: cotizaciones } });
   props.setProperty("DOLAR_DIA", hoy);
   console.log("Cotizaciones registradas hoy (dólar y UVA): " + n);
+}
+
+// Sube un PDF adjunto a la carpeta privada "bandeja" y lo registra (si ya estaba, no lo repite)
+function subirABandeja(cfg, token, msg, adjunto) {
+  var bytes = adjunto.getBytes();
+  var hash = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, bytes)
+    .map(function (b) { return ("0" + (b & 0xff).toString(16)).slice(-2); }).join("");
+  var ruta = hash + ".pdf";
+  var r = UrlFetchApp.fetch(cfg.SUPABASE_URL + "/storage/v1/object/bandeja/" + ruta, {
+    method: "post", contentType: "application/pdf", payload: bytes, muteHttpExceptions: true,
+    headers: { apikey: cfg.SUPABASE_ANON_KEY, Authorization: "Bearer " + token },
+  });
+  if (r.getResponseCode() >= 300 && !/already exists|Duplicate/i.test(r.getContentText())) {
+    throw new Error("No se pudo subir " + adjunto.getName() + ": " + r.getContentText());
+  }
+  var res = llamar(cfg, token, "rpc/registrar_bandeja", {
+    p: { hash: hash, archivo_path: ruta, nombre: adjunto.getName(), remitente: msg.getFrom(),
+         asunto: msg.getSubject(), recibido: msg.getDate().toISOString() },
+  });
+  console.log("Resumen a la bandeja: " + adjunto.getName() + " → " + JSON.stringify(res));
 }
 
 // Alertas nuevas por mail (cada alerta se manda una sola vez)

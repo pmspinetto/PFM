@@ -8,7 +8,11 @@ const db = new PGlite();
 const run = (sql) => db.exec(sql);
 await run(`create role authenticated; create role anon; create schema auth;
   create table auth.users (id uuid primary key, email text);
-  create function auth.uid() returns uuid language sql as $$ select '00000000-0000-0000-0000-000000000001'::uuid $$;`);
+  create function auth.uid() returns uuid language sql as $$ select '00000000-0000-0000-0000-000000000001'::uuid $$;
+  create schema storage;
+  create table storage.buckets (id text primary key, name text, public boolean);
+  create table storage.objects (id uuid primary key default gen_random_uuid(), bucket_id text, name text);
+  alter table storage.objects enable row level security;`);
 await run(fs.readFileSync(R + "privado/sql/01_schema.sql", "utf8").split("\n").slice(0, 352).join("\n"));
 const imp = fs.readFileSync(R + "privado/sql/03_importador.sql", "utf8").split("\n");
 await run(imp.slice(0, 26).join("\n").replace(/^update prestamos.*$/m, ""));
@@ -170,3 +174,13 @@ await run(`delete from transferencias_internas; delete from movimientos; delete 
 console.table((await db.query("select tipo, titulo, monto from alertas_calcular()")).rows);
 console.log("AL primer envío:", (await db.query("select count(*)::int as n from alertas_por_enviar()")).rows[0].n,
   "| segundo envío:", (await db.query("select count(*)::int as n from alertas_por_enviar()")).rows[0].n);
+
+// F) Bandeja de resúmenes por mail
+const h = "a".repeat(64);
+const regBandeja = (x) => db.query("select registrar_bandeja($1::jsonb) as r", [JSON.stringify(x)]);
+console.log("F registrar:", (await regBandeja({ hash: h, archivo_path: h + ".pdf", nombre: "resumen.pdf", recibido: "2026-10-25T10:00:00Z" })).rows[0].r,
+  "| repetido:", (await regBandeja({ hash: h, archivo_path: h + ".pdf" })).rows[0].r);
+try { await regBandeja({ hash: "no-es-un-hash", archivo_path: "x.pdf" }); } catch (e) { console.log("F hash inválido:", e.message); }
+await run(`update bandeja set estado = 'revisar', nota = 'No concilia'`);
+console.log("F alerta:", (await db.query("select titulo, detalle from alertas_calcular() where tipo = 'bandeja'")).rows[0],
+  "| bucket:", (await db.query("select id, public from storage.buckets")).rows[0]);
