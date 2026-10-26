@@ -878,7 +878,7 @@ const COMO = {
   ahorro: `<p><code>Ahorro = Σ (−importe en pesos)</code> de los movimientos del período con rubro de tipo <b>ahorro</b>: la parte de capital de las cuotas de préstamos (que reduce la deuda) y lo invertido.</p>`,
   dispViene: `<p><code>Disponible hoy = Σ saldo de las cuentas en pesos que no son tarjetas</code>, igual que en Hoy. Es el punto de partida del saldo proyectado. Los dólares no entran en esta proyección.</p>`,
   egresos: `<p><code>Egresos = Σ |importe|</code> de los compromisos negativos en pesos que vencen dentro del horizonte elegido (1 semana a 6 meses).</p><ul>
-    <li>Los compromisos mensuales se repiten cada mes desde su primera fecha; los anuales, cada año; los únicos, una vez.</li>
+    <li>Los compromisos se repiten según su frecuencia (cada mes, cada 3, 6 o 12 meses) desde su primera fecha; los únicos, una vez.</li>
     <li>Cada resumen de tarjeta agenda su vencimiento con el saldo a pagar y los próximos con las cuotas ya conocidas.</li>
     <li>Los que ajustan por IPC (por ejemplo, un alquiler trimestral) se multiplican en cada mes de ajuste por la inflación de los meses que terminan dos meses antes; los meses no publicados se estiman con el promedio de los últimos tres.</li>
     <li>Los que ajustan por UVA se proyectan con el importe cargado, sin indexar.</li></ul>`,
@@ -1404,7 +1404,7 @@ async function verViene() {
 }
 
 // Alta y edición de ingresos y gastos fijos (tabla compromisos)
-const FRECUENCIAS = { mensual: "Todos los meses", anual: "Una vez por año", unica: "Una sola vez" };
+const FRECUENCIAS = { mensual: "Todos los meses", trimestral: "Cada 3 meses", semestral: "Cada 6 meses", anual: "Cada 12 meses", unica: "Una sola vez" };
 const TIPOS_FIJO = { otro: "Ingreso (sueldo, honorarios, otros)", alquiler: "Alquiler", servicio: "Servicio", seguro: "Seguro", expensas: "Expensas",
                      educacion: "Educación", actividad: "Actividad", suscripcion: "Suscripción", prestamo: "Préstamo", cheque: "Cheque" };
 function editarFijo(k) {
