@@ -14,8 +14,8 @@
 //   Outlook/Hotmail, separadas por coma
 // Si se configura AVISAR_A (mail donde recibir alertas), manda por mail las alertas nuevas de
 // Family Office (gasto grande, vencimientos, liquidez, pagos duplicados o faltantes).
-// Además, una vez por día registra el dólar (oficial, MEP, blue y tarjeta) de dolarapi.com
-// y el valor UVA del BCRA;
+// Además, una vez por día registra el dólar (oficial, MEP, blue y tarjeta) de dolarapi.com,
+// el valor UVA y el IPC mensual del BCRA;
 // esa llamada diaria también mantiene activo el proyecto gratuito de Supabase.
 // =====================================================================
 
@@ -129,9 +129,21 @@ function actualizarDolar(cfg, props, obtenerToken, forzar) {
   } catch (e) {
     console.warn("No se pudo leer el valor UVA: " + e.message);
   }
-  var n = llamar(cfg, obtenerToken(), "rpc/registrar_tipos_cambio", { p: { cotizaciones: cotizaciones } });
+  // IPC mensual (variación %, INDEC vía BCRA): los últimos 6 meses publicados
+  var indices = [];
+  try {
+    var ip = UrlFetchApp.fetch("https://api.bcra.gob.ar/estadisticas/v4.0/monetarias/27?limit=6", { muteHttpExceptions: true });
+    if (ip.getResponseCode() === 200) {
+      ((JSON.parse(ip.getContentText()).results[0] || {}).detalle || []).forEach(function (d) {
+        indices.push({ mes: d.fecha.slice(0, 8) + "01", tipo: "ipc", variacion: d.valor });
+      });
+    } else console.warn("No se pudo leer el IPC (respuesta " + ip.getResponseCode() + ")");
+  } catch (e) {
+    console.warn("No se pudo leer el IPC: " + e.message);
+  }
+  var n = llamar(cfg, obtenerToken(), "rpc/registrar_tipos_cambio", { p: { cotizaciones: cotizaciones, indices: indices } });
   props.setProperty("DOLAR_DIA", hoy);
-  console.log("Cotizaciones registradas hoy (dólar y UVA): " + n);
+  console.log("Cotizaciones e índices registrados hoy (dólar, UVA e IPC): " + n);
 }
 
 // Sube un PDF adjunto a la carpeta privada "bandeja" y lo registra (si ya estaba, no lo repite)

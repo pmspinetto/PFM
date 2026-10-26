@@ -193,3 +193,13 @@ await run(`delete from compromisos;
   ('Pago único', 'otro', -1, 'ARS', 'unica', current_date + 5);`);
 console.log("V próximos 12 meses:", (await db.query(`select descripcion, count(*)::int as n from v_flujo_proyectado
   where fecha between current_date and current_date + interval '12 months' group by 1 order by 1`)).rows);
+
+// I) Alquiler que ajusta por IPC cada 3 meses, con dos meses de desfase
+const f = async (u, m) => Number((await db.query("select factor_ipc($1::date, $2::date, 3) as f", [u, m])).rows[0].f).toFixed(5);
+console.log("I factor de octubre (ajuste anterior en julio, usa jun-jul-ago):", await f("2026-07-01", "2026-10-15"),
+  "| esperado:", (1.019 * 1.021 * 1.017).toFixed(5));
+await run(`delete from compromisos;
+  insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima, indexacion, ajuste_cada, ultimo_ajuste)
+  values ('Alquiler cobrado', 'alquiler', 2860000, 'ARS', 'mensual', '2026-11-02', 'ipc', 3, '2026-10-01');`);
+console.table((await db.query("select fecha, monto from v_flujo_proyectado where fecha < '2027-06-01' order by fecha")).rows.map((r) => ({ fecha: r.fecha.toISOString().slice(0, 7), monto: r.monto })));
+console.log("I enero esperado (sep 1,9% + oct y nov estimados con el promedio jul-sep 1,9%):", Math.round(2860000 * 1.019 ** 3 * 100) / 100);

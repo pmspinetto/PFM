@@ -876,8 +876,9 @@ const COMO = {
   egresos: `<p><code>Egresos = Σ |importe|</code> de los compromisos negativos en pesos que vencen en los próximos 60 días.</p><ul>
     <li>Los compromisos mensuales se repiten cada mes desde su primera fecha; los anuales, cada año; los únicos, una vez.</li>
     <li>Cada resumen de tarjeta agenda su vencimiento con el saldo a pagar y los próximos con las cuotas ya conocidas.</li>
+    <li>Los que ajustan por IPC (por ejemplo, un alquiler trimestral) se multiplican en cada mes de ajuste por la inflación de los meses que terminan dos meses antes; los meses no publicados se estiman con el promedio de los últimos tres.</li>
     <li>Los que ajustan por UVA se proyectan con el importe cargado, sin indexar.</li></ul>`,
-  ingresosEsp: `<p><code>Ingresos esperados = Σ importe</code> de los compromisos positivos en pesos de los próximos 60 días (por ejemplo, alquileres a cobrar o el vencimiento de un plazo fijo).</p>`,
+  ingresosEsp: `<p><code>Ingresos esperados = Σ importe</code> de los compromisos positivos en pesos de los próximos 60 días (por ejemplo, sueldos, alquileres a cobrar o el vencimiento de un plazo fijo). Los que ajustan por IPC ya incluyen el ajuste que corresponda a cada mes.</p>`,
   minimo: `<p>El saldo proyectado arranca en el disponible de hoy y, en orden de fecha, suma o resta cada compromiso: <code>saldo después = saldo anterior + importe del compromiso</code>.</p><p><code>Saldo más bajo = mínimo de esa serie</code>, incluido el saldo de hoy. Si es negativo, antes de esa fecha vas a necesitar fondos.</p>`,
   patNeto: `<p><code>Patrimonio neto = liquidez + bienes e inversiones − deudas</code>, todo en dólares al último MEP.</p><p>Los préstamos restan su saldo de capital; las tarjetas, su deuda neta (solo se descuentan los pagos que ya figuran en una cuenta).</p>`,
   liquidez: `<p><code>Liquidez = Σ saldo de las cuentas que no son tarjetas</code>, pasadas a dólares: <code>pesos ÷ MEP</code>; las cuentas en dólares, tal cual.</p>${SALDO_CUENTA}`,
@@ -1319,7 +1320,7 @@ async function verViene() {
       </div>
       <div class="panel"><h3>Saldo proyectado</h3><div class="lienzo"><canvas id="gViene"></canvas></div></div>
       <div class="panel"><h3>Próximos vencimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
-        ${filas.map((f) => `<tr><td>${dm(f.fecha)}</td><td>${esc(f.descripcion)}${f.indexacion !== "ninguna" ? ` <span class="tenue">(${f.indexacion === "uva" ? "ajusta por UVA" : "estimado"})</span>` : ""}</td>
+        ${filas.map((f) => `<tr><td>${dm(f.fecha)}</td><td>${esc(f.descripcion)}${f.indexacion !== "ninguna" ? ` <span class="tenue">(${f.indexacion === "uva" ? "ajusta por UVA" : f.indexacion === "ipc" ? "ajustado por IPC, estimado" : "estimado"})</span>` : ""}</td>
           <td class="num ${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</td><td class="num tenue">${pesos(f.saldo)}</td></tr>`).join("") ||
           `<tr><td class="tenue">No hay compromisos cargados en los próximos 60 días.</td></tr>`}
       </tbody></table></div>
@@ -1327,7 +1328,7 @@ async function verViene() {
       <div class="panel" id="pFijos"><h3>Ingresos y gastos fijos</h3>
         <p class="tenue" style="margin-top:0">Sueldos, alquileres que cobras o pagas, colegio, seguros, servicios… Lo que cargues acá entra en el saldo proyectado, en las alertas de vencimiento y en el control de pagos duplicados o faltantes. Los vencimientos de tarjeta los agenda solo cada resumen.</p>
         <table class="mini"><tbody>
-          ${fijos.map((k) => `<tr><td>${esc(k.descripcion)}<div class="tenue">${FRECUENCIAS[k.frecuencia]}${k.frecuencia === "unica" ? ` el ${dm(k.fecha_proxima)}` : `, desde el ${dm(k.fecha_proxima)}`}${k.fecha_fin ? ` hasta el ${dm(k.fecha_fin)}` : ""}${k.rubro_id ? ` · ${esc(rubroDe(k.rubro_id)?.nombre ?? "")}` : ""}${k.indexacion === "uva" ? " · ajusta por UVA" : k.indexacion === "estimado" ? " · estimado" : ""}</div></td>
+          ${fijos.map((k) => `<tr><td>${esc(k.descripcion)}<div class="tenue">${FRECUENCIAS[k.frecuencia]}${k.frecuencia === "unica" ? ` el ${dm(k.fecha_proxima)}` : `, desde el ${dm(k.fecha_proxima)}`}${k.fecha_fin ? ` hasta el ${dm(k.fecha_fin)}` : ""}${k.rubro_id ? ` · ${esc(rubroDe(k.rubro_id)?.nombre ?? "")}` : ""}${k.indexacion === "uva" ? " · ajusta por UVA" : k.indexacion === "estimado" ? " · estimado" : k.indexacion === "ipc" ? ` · ajusta por IPC cada ${k.ajuste_cada ?? 3} meses (último ajuste ${(k.ultimo_ajuste ?? "").slice(5, 7)}/${(k.ultimo_ajuste ?? "").slice(0, 4)})` : ""}</div></td>
             <td class="num ${k.monto < 0 ? "menos" : "mas"}">${conMoneda(k.monto, k.moneda)}</td>
             <td><button class="link" data-editar-fijo="${k.id}" type="button">Editar</button></td></tr>`).join("") || `<tr><td class="tenue">Todavía no cargaste ingresos ni gastos fijos.</td></tr>`}
         </tbody></table>
@@ -1382,10 +1383,15 @@ function editarFijo(k) {
       <div><label for="fjRubro">Rubro</label><select id="fjRubro">${opcionesRubro(k.rubro_id)}</select></div>
       <div><label for="fjCuenta">Cuenta (opcional)</label><select id="fjCuenta">${opciones(ref.cuentas.filter((c) => c.activa), k.cuenta_id, "—")}</select></div>
       <div><label for="fjActivo">Bien (opcional)</label><select id="fjActivo">${opciones(ref.activos, k.activo_id, "—")}</select></div>
-      <div><label for="fjIdx">El monto…</label><select id="fjIdx"><option value="ninguna">Es fijo</option><option value="estimado" ${k.indexacion === "estimado" ? "selected" : ""}>Es estimado</option><option value="uva" ${k.indexacion === "uva" ? "selected" : ""}>Ajusta por UVA</option></select></div>
+      <div><label for="fjIdx">El monto…</label><select id="fjIdx"><option value="ninguna">Es fijo</option><option value="estimado" ${k.indexacion === "estimado" ? "selected" : ""}>Es estimado</option><option value="ipc" ${k.indexacion === "ipc" ? "selected" : ""}>Ajusta por IPC</option><option value="uva" ${k.indexacion === "uva" ? "selected" : ""}>Ajusta por UVA</option></select></div>
+      <div class="ipc"><label for="fjCada">Ajusta cada (meses)</label><input id="fjCada" type="text" inputmode="numeric" value="${k.ajuste_cada ?? 3}"></div>
+      <div class="ipc"><label for="fjUlt">Mes del último ajuste</label><input id="fjUlt" type="month" value="${(k.ultimo_ajuste ?? hoyISO()).slice(0, 7)}"></div>
+      <p class="ipc tenue" style="grid-column:1/-1;margin:.25rem 0 0">El monto de arriba es el vigente desde el último ajuste. En cada ajuste se multiplica por la inflación de los meses que terminan dos meses antes (ajuste trimestral en octubre: junio, julio y agosto). Los meses que el INDEC todavía no publicó se estiman con el promedio de los últimos tres.</p>
       <div class="acciones"><button id="fjGuardar" type="button">Guardar</button>${nuevo ? "" : `<button class="sec" id="fjBorrar" type="button">Quitar</button>`}<span id="fjMsg" class="tenue"></span></div>
     </div>
     <p class="tenue">El rubro sirve para el control de pagos: si un mes no aparece un pago de ese rubro por un importe parecido (±15%), o aparece dos veces, te avisa.</p>`);
+  const verIpc = () => $("detCuerpo").querySelectorAll(".ipc").forEach((x) => x.classList.toggle("oculto", $("fjIdx").value !== "ipc"));
+  $("fjIdx").onchange = verIpc; verIpc();
   let sg = signo;
   $("detCuerpo").querySelectorAll("[data-signo]").forEach((b) => b.onclick = () => {
     sg = +b.dataset.signo; $("detCuerpo").querySelectorAll("[data-signo]").forEach((x) => x.classList.toggle("activo", x === b));
@@ -1397,7 +1403,9 @@ function editarFijo(k) {
     const val = (id) => ($(id).value ? +$(id).value : null);
     const datos = { descripcion: desc, tipo: $("fjTipo").value, monto: sg * Math.abs(monto), moneda: $("fjMoneda").value,
       frecuencia: $("fjFrec").value, fecha_proxima: fecha, fecha_fin: $("fjFin").value || null, indexacion: $("fjIdx").value,
-      rubro_id: val("fjRubro"), cuenta_id: val("fjCuenta"), activo_id: val("fjActivo"), activo: true };
+      rubro_id: val("fjRubro"), cuenta_id: val("fjCuenta"), activo_id: val("fjActivo"), activo: true,
+      ajuste_cada: $("fjIdx").value === "ipc" ? Math.min(12, Math.max(1, parseInt($("fjCada").value, 10) || 3)) : null,
+      ultimo_ajuste: $("fjIdx").value === "ipc" ? ($("fjUlt").value || hoyISO().slice(0, 7)) + "-01" : null };
     const { error } = nuevo ? await sb.from("compromisos").insert(datos) : await sb.from("compromisos").update(datos).eq("id", k.id);
     if (error) return ($("fjMsg").textContent = error.message);
     $("detalle").close(); verViene();
