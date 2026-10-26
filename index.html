@@ -86,6 +86,20 @@ details>summary{cursor:pointer;color:var(--marca);font-weight:600;font-size:.9re
 .cifra .val{font-size:1.6rem;font-weight:700;margin-top:.35rem;letter-spacing:-.02em;line-height:1.15}
 .cifra .sub{font-size:.8rem;color:var(--tinta-2);margin-top:.35rem}
 .cifra.total{border-top:3px solid var(--marca)}
+.cifra.click{cursor:pointer;transition:transform .12s,box-shadow .12s,border-color .12s;position:relative}
+.cifra.click:hover{transform:translateY(-1px);border-color:var(--marca);box-shadow:0 4px 14px rgba(20,35,28,.08)}
+.cifra.click::after{content:"Ver detalle ›";position:absolute;top:1.05rem;right:1.1rem;font-size:.7rem;font-weight:600;color:var(--marca);opacity:0;transition:opacity .12s}
+.cifra.click:hover::after,.cifra.click:focus-visible::after{opacity:1}
+dialog#detalle{border:0;border-radius:14px;padding:0;width:min(760px,94vw);max-height:86vh;background:var(--papel);color:var(--tinta);box-shadow:0 20px 60px rgba(0,0,0,.25)}
+dialog#detalle::backdrop{background:rgba(15,25,20,.45)}
+.dlg-cab{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 1.25rem;border-bottom:1px solid var(--renglon);position:sticky;top:0;background:var(--papel);z-index:1}
+.dlg-cab h3{margin:0;font-size:1.05rem}
+#detCuerpo{padding:1rem 1.25rem 1.25rem}
+#detCuerpo .total td{font-weight:700;border-top:2px solid var(--renglon)}
+.barra{height:6px;border-radius:3px;background:var(--marca-2);overflow:hidden;margin-top:.3rem}
+.barra>span{display:block;height:100%;background:var(--marca)}
+.lienzo.chico{height:260px}
+.link{background:none;border:0;padding:0;color:var(--marca);font-weight:600;font-size:.8rem;cursor:pointer;text-decoration:underline}
 .dos{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem}
 .panel{background:var(--papel);border:1px solid var(--renglon);border-radius:var(--radio);padding:1.15rem 1.25rem;margin-bottom:1.25rem;box-shadow:var(--sombra)}
 .panel h3,.vista h3{margin:0 0 .85rem;font-size:.98rem;font-weight:650;letter-spacing:-.01em}
@@ -244,6 +258,10 @@ section.bloque{margin-top:2rem}
   </div>
 </main>
 </div>
+<dialog id="detalle" aria-labelledby="detTitulo">
+  <div class="dlg-cab"><h3 id="detTitulo"></h3><button class="sec" id="detCerrar" type="button">Cerrar</button></div>
+  <div id="detCuerpo"></div>
+</dialog>
 
 <script type="module">
   import * as pdfjsLib from "./vendor/pdfjs-dist@4.10.38/pdf.min.mjs";
@@ -799,9 +817,45 @@ async function saldos() {
   return data.map((s) => ({ ...s, cuenta: ref.cuentas.find((c) => c.id === s.cuenta_id) }));
 }
 
-function cifra(lbl, val, sub = "", clase = "") {
-  return `<div class="cifra ${clase}"><div class="lbl">${lbl}</div><div class="val">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
+// Indicador. `det` (opcional) es lo que se ve al pincharlo: HTML, una función que devuelve HTML
+// (puede ser async y recibir el contenedor para dibujar un gráfico) o { ir: "#selector" } para saltar ahí.
+const detalles = {};
+let detSeq = 0;
+function cifra(lbl, val, sub = "", clase = "", det = null) {
+  let extra = "";
+  if (det) { const id = "d" + ++detSeq; detalles[id] = { titulo: lbl, det }; extra = ` click" data-det="${id}" role="button" tabindex="0`; }
+  return `<div class="cifra ${clase}${extra}"><div class="lbl">${lbl}</div><div class="val">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
 }
+async function abrirDetalle(id) {
+  const d = detalles[id]; if (!d) return;
+  if (d.det.ir) return document.querySelector(d.det.ir)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  $("detTitulo").textContent = d.titulo;
+  $("detCuerpo").innerHTML = typeof d.det === "function" ? `<p class="tenue">Cargando…</p>` : d.det;
+  if (!$("detalle").open) $("detalle").showModal();
+  if (typeof d.det === "function") $("detCuerpo").innerHTML = await d.det($("detCuerpo")) ?? $("detCuerpo").innerHTML;
+}
+function abrirVentana(titulo, html) {
+  $("detTitulo").textContent = titulo; $("detCuerpo").innerHTML = html;
+  if (!$("detalle").open) $("detalle").showModal();
+}
+document.addEventListener("click", (e) => { const c = e.target.closest("[data-det]"); if (c) abrirDetalle(c.dataset.det); });
+document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.dataset?.det) abrirDetalle(e.target.dataset.det); });
+$("detCerrar").onclick = () => $("detalle").close();
+$("detalle").addEventListener("click", (e) => { if (e.target === $("detalle")) $("detalle").close(); });
+
+// Tabla de detalle: filas [etiqueta, valor, sub?, proporción 0..1?] y total opcional
+function tablaDetalle(filas, total = null) {
+  return `<table class="mini"><tbody>${filas.map(([k, v, sub, prop]) => `<tr><td>${k}${sub ? `<div class="tenue">${sub}</div>` : ""}${prop != null ? `<div class="barra"><span style="width:${Math.max(0, Math.min(100, prop * 100)).toFixed(1)}%"></span></div>` : ""}</td><td class="num">${v}</td></tr>`).join("")}
+    ${total ? `<tr class="total"><td>${total[0]}</td><td class="num">${total[1]}</td></tr>` : ""}</tbody></table>`;
+}
+const pct = (x, tot) => (tot ? (x / tot * 100).toFixed(1).replace(".", ",") + "%" : "—");
+
+// Paleta de categorías en la gama de la marca
+const PALETA = ["#1E5A43", "#A57C2D", "#4E9A78", "#D0A85C", "#6E8F84", "#8C5E34", "#9CC8B3", "#C8B08A", "#3F6B5C", "#B98B6B", "#2F7D5B", "#E2C98F"];
+const paleta = (n) => Array.from({ length: n }, (_, i) => PALETA[i % PALETA.length]);
+const opcionesDona = (fmtValor) => ({ maintainAspectRatio: false, cutout: "62%",
+  plugins: { legend: { position: innerWidth < 700 ? "bottom" : "right" },
+             tooltip: { callbacks: { label: (c) => { const t = c.dataset.data.reduce((a, b) => a + b, 0); return ` ${c.label}: ${fmtValor(c.raw)} (${pct(c.raw, t)})`; } } } } });
 
 function grafico(id, config) {
   // Estilo común: tipografía de la app, textos tenues y grilla suave
@@ -877,7 +931,7 @@ async function verHoy() {
       .select("fecha, descripcion_original, monto, moneda, cuenta_id, rubro_id, origen")
       .order("fecha", { ascending: false }).order("id", { ascending: false }).limit(12);
 
-    const filaSaldo = (s) => {
+    const estadoDe = (s) => {
       const mas = Number(s.cant_movimientos) > 0 ? ` + ${s.cant_movimientos} mov.` : "";
       const c = ctl.data.find((x) => x.cuenta_id === s.cuenta_id && x.moneda === s.moneda && x.informado_al === s.confirmado_al);
       const sinExplicar = c && c.sin_explicar != null && Math.abs(c.sin_explicar) >= 1
@@ -886,8 +940,23 @@ async function verHoy() {
         s.fuente === "informado" ? `Informado el ${dm(s.confirmado_al)}${mas}${sinExplicar}`
         : s.fuente === "arqueo" ? `Arqueo del ${dm(s.confirmado_al)}${mas}`
         : mas ? `Estimado: confirmado al ${dm(s.confirmado_al)}${mas}` : `Confirmado al ${dm(s.confirmado_al)}`);
-      return `<tr><td>${esc(s.alias)}<div class="tenue">${estado}</div></td><td class="num ${s.saldo_estimado < 0 ? "menos" : ""}">${conMoneda(s.saldo_estimado, s.moneda)}</td></tr>`;
+      return estado;
     };
+    const filaSaldo = (s) => `<tr><td>${esc(s.alias)}<div class="tenue">${estadoDe(s)}</div></td><td class="num ${s.saldo_estimado < 0 ? "menos" : ""}">${conMoneda(s.saldo_estimado, s.moneda)}</td></tr>`;
+    // Detalles de los indicadores
+    const detCuentas = (lista, mon) => {
+      const xs = lista.filter((s) => s.moneda === mon).sort((a, b) => b.saldo_estimado - a.saldo_estimado);
+      const tot = xs.reduce((a, s) => a + Number(s.saldo_estimado), 0);
+      return xs.length ? tablaDetalle(xs.map((s) => [esc(s.alias), conMoneda(s.saldo_estimado, mon), estadoDe(s), tot > 0 && s.saldo_estimado > 0 ? s.saldo_estimado / tot : null]), ["Total", conMoneda(tot, mon)])
+        : `<p class="tenue">No hay cuentas en ${mon === "USD" ? "dólares" : "pesos"} con saldo cargado.</p>`;
+    };
+    const detTarjetas = tar.length ? tablaDetalle(tar.map((s) => [`${esc(s.alias)} <span class="tenue">(${s.moneda === "USD" ? "dólares" : "pesos"})</span>`, conMoneda(s.saldo_estimado, s.moneda), s.estado]),
+      ["Total a pagar", pesos(deuARS) + (deuUSD ? " + " + dolares(deuUSD) : "")]) + `<p class="tenue">${esc(tarjetas.nota)}. Los resúmenes ya pagados o vencidos con débito automático no suman.</p>` : `<p class="tenue">No hay tarjetas con saldo.</p>`;
+    const detNeto = t ? tablaDetalle([
+      ["Disponible en pesos, en dólares", dolares(dispARS / t.valor), `${pesos(dispARS)} al dólar ${t.tipo} ${pesos(t.valor)}`],
+      ["Disponible en dólares", dolares(dispUSD)],
+      ["Deuda de tarjetas (solo pagos ya registrados)", dolares(neta("ARS") / t.valor + neta("USD"))],
+    ], ["Neto", dolares(netoUSD)]) + `<p class="tenue">No incluye bienes ni préstamos: eso está en Patrimonio.</p>` : `<p class="tenue">Carga el dólar en Patrimonio.</p>`;
 
     $("hoy-c").innerHTML = `
       <div class="barra-filtros"><button class="sec" id="btnSaldos" type="button">Actualizar saldos</button>
@@ -897,20 +966,29 @@ async function verHoy() {
       ${alertas.length ? `<div class="msg info"><strong>Alertas (${alertas.length})</strong>
         <ul style="margin:.4rem 0 0;padding-left:1.2rem">${alertas.map((a) => `<li>${esc(a.titulo)}${a.monto != null && a.tipo !== "saldo_insuficiente" ? ` · ${conMoneda(Math.abs(a.monto), a.moneda)}` : ""}${a.detalle ? ` <span class="tenue">(${esc(a.detalle)})</span>` : ""}</li>`).join("")}</ul></div>` : ""}
       <div class="cifras">
-        ${cifra("Disponible en pesos", pesos(dispARS), "Cuentas, billeteras y efectivo", "total")}
-        ${cifra("Disponible en dólares", dolares(dispUSD))}
-        ${cifra("Deuda de tarjetas", pesos(deuARS) + (deuUSD ? " + " + dolares(deuUSD) : ""), tarjetas.nota)}
+        ${cifra("Disponible en pesos", pesos(dispARS), "Cuentas, billeteras y efectivo", "total", detCuentas(liq, "ARS"))}
+        ${cifra("Disponible en dólares", dolares(dispUSD), "", "", detCuentas(liq, "USD"))}
+        ${cifra("Deuda de tarjetas", pesos(deuARS) + (deuUSD ? " + " + dolares(deuUSD) : ""), tarjetas.nota, "", detTarjetas)}
         ${cifra("Neto total en dólares", netoUSD == null ? "—" : dolares(netoUSD),
-                t ? `Dólar ${t.tipo} ${pesos(t.valor)} del ${dm(t.fecha)}` : "Carga el dólar en Patrimonio")}
+                t ? `Dólar ${t.tipo} ${pesos(t.valor)} del ${dm(t.fecha)}` : "Carga el dólar en Patrimonio", "", detNeto)}
       </div>
       <div class="dos">
         <div class="panel"><h3>Saldos por cuenta</h3><div class="tabla" style="border:0"><table class="mini">
           <tbody>${liq.map(filaSaldo).join("")}${tar.map(filaSaldo).join("")}</tbody></table></div></div>
+        <div class="panel"><h3>Dónde está la plata</h3><div class="lienzo chico"><canvas id="gHoy"></canvas></div>
+          <p class="tenue" style="margin-bottom:0">Saldos positivos de cuentas y efectivo; los dólares, en pesos al dólar ${t ? t.tipo : "de referencia"}.</p></div>
+      </div>
+      <div>
         <div class="panel"><h3>Últimos movimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
           ${(ult || []).map((m) => `<tr><td>${dm(m.fecha)}</td><td>${esc(m.descripcion_original).slice(0, 48)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${esc(rubroDe(m.rubro_id)?.nombre ?? "Sin clasificar")}</div>${m.origen === "mail" ? `<span class="chip">por mail</span>` : ""}</td>
             <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td></tr>`).join("")}
         </tbody></table></div></div>
       </div>`;
+    const enPesos = liq.map((s) => ({ alias: s.alias, v: s.moneda === "USD" ? Number(s.saldo_estimado) * (t?.valor ?? 0) : Number(s.saldo_estimado) }))
+      .filter((x) => x.v > 0).sort((a, b) => b.v - a.v);
+    grafico("gHoy", { type: "doughnut", data: { labels: enPesos.map((x) => x.alias),
+      datasets: [{ data: enPesos.map((x) => Math.round(x.v)), backgroundColor: paleta(enPesos.length), borderColor: css("--papel"), borderWidth: 2 }] },
+      options: opcionesDona(pesos) });
     $("btnSaldos").onclick = () => formularioSaldos(ss, tar);
     $("btnAlertas").onclick = configurarAlertas;
   } catch (e) { $("hoy-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
@@ -1000,13 +1078,13 @@ async function lineasDelRango({ desde, hasta }) {
 }
 
 function resumirMes(lineas) {
-  const r = { gasto: 0, recurrente: 0, extra: 0, ingreso: 0, ahorro: 0, grupos: {}, rubros: {}, personas: {}, para: {}, sinTc: 0 };
+  const r = { gasto: 0, recurrente: 0, extra: 0, ingreso: 0, ahorro: 0, grupos: {}, rubros: {}, personas: {}, para: {}, ingRub: {}, ahoRub: {}, sinTc: 0 };
   for (const l of lineas) {
     const rb = rubroDe(l.rubro_id); if (!rb) continue;
     const v = l.monto_ars == null ? 0 : Number(l.monto_ars);
     if (l.monto_ars == null) r.sinTc++;
-    if (rb.tipo === "ingreso") { r.ingreso += v; continue; }
-    if (rb.tipo === "ahorro") { r.ahorro += -v; continue; }
+    if (rb.tipo === "ingreso") { r.ingreso += v; r.ingRub[rb.nombre] = (r.ingRub[rb.nombre] || 0) + v; continue; }
+    if (rb.tipo === "ahorro") { r.ahorro += -v; r.ahoRub[rb.nombre] = (r.ahoRub[rb.nombre] || 0) - v; continue; }
     if (rb.tipo !== "gasto") continue;
     const g = grupoDe(l.rubro_id).nombre, gasto = -v;
     r.gasto += gasto;
@@ -1024,42 +1102,62 @@ function resumirMes(lineas) {
 async function verMes() {
   try {
     const mes = $("mesSel").value || hoyISO().slice(0, 7), n = +$("fPeriodo").value || 1;
-    const [act, prev] = await Promise.all([lineasDelRango(rangoMeses(mes, n)), lineasDelRango(rangoMeses(mes, n, 1))]);
+    const [act, prev, anio] = await Promise.all([lineasDelRango(rangoMeses(mes, n)), lineasDelRango(rangoMeses(mes, n, 1)), lineasDelRango(rangoMeses(mes, 12))]);
+    // Evolución de los últimos 12 meses (con los mismos filtros)
+    const meses12 = Array.from({ length: 12 }, (_, i) => { const d = new Date(Date.UTC(+mes.slice(0, 4), +mes.slice(5, 7) - 12 + i, 1)); return d.toISOString().slice(0, 7); });
+    const porMes = meses12.map((m) => resumirMes(anio.filter((l) => l.fecha.startsWith(m))));
+    const etiquetaMes = (m) => new Date(m + "-15T12:00:00Z").toLocaleDateString("es-AR", { month: "short", year: "2-digit" });
     const periodo = n === 1 ? "mes" : `${n} meses`;
     const r = resumirMes(act), p = resumirMes(prev);
     const varPct = p.recurrente ? ((r.recurrente - p.recurrente) / p.recurrente) * 100 : null;
     const grupos = Object.entries(r.grupos).sort((a, b) => (b[1].rec + b[1].ext) - (a[1].rec + a[1].ext));
-    const lista = (obj) => Object.entries(obj).sort((a, b) => b[1] - a[1])
-      .map(([k, v]) => `<tr><td>${esc(k)}</td><td class="num">${pesos(v)}</td></tr>`).join("");
+    const lista = (obj) => { const xs = Object.entries(obj).sort((a, b) => b[1] - a[1]), tot = xs.reduce((a, x) => a + x[1], 0);
+      return xs.map(([k, v]) => `<tr><td>${esc(k)}<div class="barra"><span style="width:${tot > 0 ? Math.max(0, v / tot * 100).toFixed(1) : 0}%"></span></div></td><td class="num">${pesos(v)}<div class="tenue">${pct(v, tot)}</div></td></tr>`).join(""); };
+    const totGrupo = (g) => g.rec + g.ext;
+    const detGasto = tablaDetalle(grupos.map(([k, g]) => [esc(k), pesos(totGrupo(g)), g.ext ? `Recurrente ${pesos(g.rec)} · extraordinario ${pesos(g.ext)}` : "", r.gasto ? totGrupo(g) / r.gasto : null]), ["Total", pesos(r.gasto)]);
+    const detComparar = (() => {
+      const nombres = [...new Set([...Object.keys(r.grupos), ...Object.keys(p.grupos)])];
+      const filas = nombres.map((k) => { const a = r.grupos[k]?.rec ?? 0, b = p.grupos[k]?.rec ?? 0; return [k, a, b]; }).sort((x, y) => y[1] - x[1]);
+      return `<table class="mini"><thead><tr><th>Grupo</th><th class="num">Ahora</th><th class="num">Antes</th><th class="num">Variación</th></tr></thead><tbody>
+        ${filas.map(([k, a, b]) => `<tr><td>${esc(k)}</td><td class="num">${pesos(a)}</td><td class="num tenue">${pesos(b)}</td><td class="num ${a > b ? "menos" : "mas"}">${b ? (a >= b ? "+" : "−") + Math.abs((a - b) / b * 100).toFixed(1).replace(".", ",") + "%" : "—"}</td></tr>`).join("")}
+        <tr class="total"><td>Total recurrente</td><td class="num">${pesos(r.recurrente)}</td><td class="num">${pesos(p.recurrente)}</td><td></td></tr></tbody></table>
+        <p class="tenue">Solo gasto recurrente: los extraordinarios no se comparan.</p>`;
+    })();
+    const detRubros = (obj, tot, vacio) => Object.keys(obj).length
+      ? tablaDetalle(Object.entries(obj).sort((a, b) => b[1] - a[1]).map(([k, v]) => [esc(k), pesos(v), "", tot ? v / tot : null]), ["Total", pesos(tot)]) : `<p class="tenue">${vacio}</p>`;
 
     $("mes-c").innerHTML = `
       <div class="cifras">
-        ${cifra(n === 1 ? "Gasto total" : `Gasto total (${periodo})`, pesos(r.gasto), `Recurrente ${pesos(r.recurrente)}, extraordinario ${pesos(r.extra)}`, "total")}
-        ${cifra(`Gasto recurrente vs. ${n === 1 ? "mes anterior" : `los ${periodo} anteriores`}`, varPct == null ? "—" : (varPct >= 0 ? "+" : "") + varPct.toFixed(1) + "%", `Antes: ${pesos(p.recurrente)}`)}
-        ${cifra("Ingresos", pesos(r.ingreso))}
-        ${cifra("Ahorro (capital de préstamos)", pesos(r.ahorro))}
+        ${cifra(n === 1 ? "Gasto total" : `Gasto total (${periodo})`, pesos(r.gasto), `Recurrente ${pesos(r.recurrente)}, extraordinario ${pesos(r.extra)}`, "total", detGasto)}
+        ${cifra(`Gasto recurrente vs. ${n === 1 ? "mes anterior" : `los ${periodo} anteriores`}`, varPct == null ? "—" : (varPct >= 0 ? "+" : "−") + Math.abs(varPct).toFixed(1).replace(".", ",") + "%", `Antes: ${pesos(p.recurrente)}`, "", detComparar)}
+        ${cifra("Ingresos", pesos(r.ingreso), "", "", detRubros(r.ingRub, r.ingreso, "No hay ingresos en el período."))}
+        ${cifra("Ahorro", pesos(r.ahorro), "Capital de préstamos e inversiones", "", detRubros(r.ahoRub, r.ahorro, "No hay ahorro en el período."))}
       </div>
       ${r.sinTc ? `<div class="msg info">${r.sinTc} movimientos en dólares no tienen tipo de cambio y no suman al total.</div>` : ""}
       ${act.length ? "" : `<div class="msg info">No hay movimientos cargados para este período y filtros.</div>`}
-      <div class="panel"><h3>Gasto por grupo</h3><div class="lienzo"><canvas id="gMes"></canvas></div></div>
+      <div class="panel"><h3>Últimos 12 meses</h3><div class="lienzo"><canvas id="gEvol"></canvas></div></div>
       <div class="dos">
-        <div class="panel"><h3>Por rubro</h3><table class="mini"><tbody>${lista(r.rubros)}</tbody></table></div>
-        <div>
-          <div class="panel"><h3>Quién pagó</h3><table class="mini"><tbody>${lista(r.personas)}</tbody></table></div>
-          <div class="panel"><h3>Para quién</h3><table class="mini"><tbody>${lista(r.para) || `<tr><td class="tenue">Sin beneficiarios asignados</td></tr>`}</tbody></table></div>
-        </div>
+        <div class="panel"><h3>Gasto por grupo</h3><div class="lienzo"><canvas id="gMes"></canvas></div></div>
+        <div class="panel"><h3>Por rubro</h3><table class="mini"><tbody>${lista(r.rubros) || `<tr><td class="tenue">Sin gastos.</td></tr>`}</tbody></table></div>
+      </div>
+      <div class="dos">
+        <div class="panel"><h3>Quién pagó</h3><table class="mini"><tbody>${lista(r.personas) || `<tr><td class="tenue">Sin gastos.</td></tr>`}</tbody></table></div>
+        <div class="panel"><h3>Para quién</h3><table class="mini"><tbody>${lista(r.para) || `<tr><td class="tenue">Sin beneficiarios asignados</td></tr>`}</tbody></table></div>
       </div>
       <div class="panel"><h3>Gastos del período</h3><div id="detalleMes" class="tenue">Cargando…</div></div>`;
     detalleGastos(act);
 
-    grafico("gMes", {
-      type: "bar",
-      data: { labels: grupos.map((g) => g[0]), datasets: [
-        { label: "Recurrente", data: grupos.map((g) => Math.round(g[1].rec)), backgroundColor: css("--marca"), borderRadius: 4, maxBarThickness: 26 },
-        { label: "Extraordinario", data: grupos.map((g) => Math.round(g[1].ext)), backgroundColor: css("--laton"), borderRadius: 4, maxBarThickness: 26 } ] },
-      options: { indexAxis: "y", maintainAspectRatio: false, scales: { x: { stacked: true, ticks: { callback: (v) => pesos(v) } }, y: { stacked: true } },
-                 plugins: { tooltip: { callbacks: { label: (c) => `${c.dataset.label}: ${pesos(c.raw)}` } } } },
-    });
+    grafico("gMes", { type: "doughnut", data: { labels: grupos.map((g) => g[0]),
+      datasets: [{ data: grupos.map((g) => Math.round(totGrupo(g[1]))), backgroundColor: paleta(grupos.length), borderColor: css("--papel"), borderWidth: 2 }] },
+      options: opcionesDona(pesos) });
+    const compacto = (v) => Math.abs(v) >= 1e6 ? "$ " + (v / 1e6).toFixed(1).replace(".", ",") + " M" : Math.abs(v) >= 1e3 ? "$ " + Math.round(v / 1e3) + " mil" : pesos(v);
+    grafico("gEvol", { data: { labels: meses12.map(etiquetaMes), datasets: [
+        { type: "bar", label: "Gasto recurrente", data: porMes.map((x) => Math.round(x.recurrente)), backgroundColor: css("--marca"), borderRadius: 4, stack: "g", maxBarThickness: 34 },
+        { type: "bar", label: "Gasto extraordinario", data: porMes.map((x) => Math.round(x.extra)), backgroundColor: css("--laton"), borderRadius: 4, stack: "g", maxBarThickness: 34 },
+        { type: "line", label: "Ingresos", stack: "ingresos", data: porMes.map((x) => Math.round(x.ingreso)), borderColor: css("--entra"), backgroundColor: css("--entra"), borderWidth: 2, pointRadius: 3, tension: .3 } ] },
+      options: { maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
+                 scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, ticks: { callback: compacto } } },
+                 plugins: { tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${pesos(c.raw)}` } } } } });
   } catch (e) { $("mes-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
 }
 
@@ -1152,13 +1250,19 @@ async function verViene() {
     const egresos = filas.filter((f) => f.monto < 0).reduce((a, f) => a - Number(f.monto), 0);
     const ingresos = filas.filter((f) => f.monto > 0).reduce((a, f) => a + Number(f.monto), 0);
     const minimo = filas.reduce((m, f) => Math.min(m, f.saldo), inicial);
+    const fMin = filas.find((f) => f.saldo === minimo)?.fecha ?? null;
+    const disp = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito" && s.moneda === "ARS").sort((a, b) => b.saldo_estimado - a.saldo_estimado);
+    const detDisp = tablaDetalle(disp.map((s) => [esc(s.alias), pesos(s.saldo_estimado)]), ["Total", pesos(inicial)]);
+    const detFlujo = (cond, vacio) => { const xs = filas.filter(cond);
+      return xs.length ? tablaDetalle(xs.map((f) => [`${dm(f.fecha)} · ${esc(f.descripcion)}`, `<span class="${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</span>`, `Saldo después: ${pesos(f.saldo)}`]),
+        ["Total", pesos(xs.reduce((a, f) => a + Number(f.monto), 0))]) : `<p class="tenue">${vacio}</p>`; };
 
     $("viene-c").innerHTML = `
       <div class="cifras">
-        ${cifra("Disponible hoy en pesos", pesos(inicial), "", "total")}
-        ${cifra("Egresos comprometidos (60 días)", pesos(egresos))}
-        ${cifra("Ingresos esperados (60 días)", pesos(ingresos))}
-        ${cifra("Saldo más bajo proyectado", pesos(minimo), minimo < 0 ? "Vas a necesitar fondos antes de esa fecha" : "")}
+        ${cifra("Disponible hoy en pesos", pesos(inicial), "", "total", detDisp)}
+        ${cifra("Egresos comprometidos (60 días)", pesos(egresos), "", "", detFlujo((f) => f.monto < 0, "No hay egresos comprometidos."))}
+        ${cifra("Ingresos esperados (60 días)", pesos(ingresos), "", "", detFlujo((f) => f.monto > 0, "No hay ingresos esperados."))}
+        ${cifra("Saldo más bajo proyectado", pesos(minimo), minimo < 0 ? "Vas a necesitar fondos antes de esa fecha" : fMin ? `El ${dm(fMin)}` : "", "", detFlujo((f) => !fMin || f.fecha <= fMin, "No hay movimientos proyectados."))}
       </div>
       <div class="panel"><h3>Saldo proyectado</h3><div class="lienzo"><canvas id="gViene"></canvas></div></div>
       <div class="panel"><h3>Próximos vencimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
@@ -1176,13 +1280,21 @@ async function verViene() {
         }).join("") || `<tr><td class="tenue">No hay compras en cuotas en los últimos resúmenes.</td></tr>`}
       </tbody></table></div>`;
 
+    const ctxV = document.getElementById("gViene").getContext("2d");
+    const relleno = ctxV.createLinearGradient(0, 0, 0, 320);
+    relleno.addColorStop(0, css("--marca") + "55"); relleno.addColorStop(1, css("--marca") + "05");
     grafico("gViene", {
       type: "line",
       data: { labels: [dm(hoy), ...filas.map((f) => dm(f.fecha))],
-              datasets: [{ label: "Saldo proyectado", data: [inicial, ...filas.map((f) => Math.round(f.saldo))],
-                           borderColor: css("--marca"), backgroundColor: css("--marca"), stepped: true, pointRadius: 3, borderWidth: 2 }] },
-      options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => pesos(c.raw) } } },
-                 scales: { y: { ticks: { callback: (v) => pesos(v) } } } },
+              datasets: [{ label: "Saldo proyectado", data: [inicial, ...filas.map((f) => Math.round(f.saldo))], fill: true, backgroundColor: relleno,
+                           borderColor: css("--marca"), stepped: true, borderWidth: 2,
+                           pointRadius: [4, ...filas.map((f) => (f.saldo === minimo ? 6 : 3))],
+                           pointBackgroundColor: [css("--marca"), ...filas.map((f) => (f.saldo < 0 ? css("--sale") : f.monto < 0 ? css("--marca") : css("--entra")))] }] },
+      options: { maintainAspectRatio: false, interaction: { mode: "nearest", intersect: false },
+                 plugins: { legend: { display: false }, tooltip: { callbacks: {
+                   title: (it) => (it[0].dataIndex === 0 ? "Hoy" : `${dm(filas[it[0].dataIndex - 1].fecha)} · ${filas[it[0].dataIndex - 1].descripcion}`),
+                   label: (c) => (c.dataIndex === 0 ? ` Disponible: ${pesos(c.raw)}` : ` ${pesos(filas[c.dataIndex - 1].monto)} → saldo ${pesos(c.raw)}`) } } },
+                 scales: { x: { grid: { display: false } }, y: { ticks: { callback: (v) => pesos(v) } } } },
     });
   } catch (e) { $("viene-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
 }
@@ -1265,6 +1377,16 @@ async function verPatrimonio() {
       return `${r >= 0 ? "+" : ""}${r.toFixed(1)}% desde ${dm(desde)}${aportes ? `, con aportes de ${conMoneda(aportes, a.moneda)}` : ""}`;
     };
     const totInv = inversiones.reduce((x, a) => x + a.usd, 0);
+    const TIPOS_BIEN = { inmueble: "Inmuebles", vehiculo: "Vehículos", inversion: "Inversiones", otro: "Otros bienes" };
+    const porTipo = Object.entries(TIPOS_BIEN).map(([k, n]) => [n, bienes.filter((a) => a.tipo === k).reduce((x, a) => x + a.usd, 0)]).filter((x) => x[1] > 0);
+    const detNeto = tablaDetalle([["Liquidez (cuentas y efectivo)", dolares(liq)], ...porTipo.map(([n, v]) => [n, dolares(v)]),
+      ...deudas.map((d) => [esc(d.nombre), dolares(d.usd)]), ["Tarjetas de crédito", dolares(tar)]], ["Patrimonio neto", dolares(neto)])
+      + `<p class="tenue">En dólares ${t ? `${t.tipo} a ${pesos(v)}` : "de referencia"}.</p>`;
+    const detLiq = tablaDetalle(ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito").sort((a, b) => usd(b.saldo_estimado, b.moneda) - usd(a.saldo_estimado, a.moneda))
+      .map((s) => [esc(s.alias), dolares(usd(s.saldo_estimado, s.moneda)), conMoneda(s.saldo_estimado, s.moneda), liq > 0 ? usd(s.saldo_estimado, s.moneda) / liq : null]), ["Total", dolares(liq)]);
+    const detBienes = tablaDetalle(bienes.sort((a, b) => b.usd - a.usd).map((a) => [esc(a.nombre), dolares(a.usd), TIPOS_BIEN[a.tipo] ?? "", totAct ? a.usd / totAct : null]), ["Total", dolares(totAct)]);
+    const detDeudas = tablaDetalle([...deudas.map((d) => [esc(d.nombre), dolares(d.usd), `Saldo ${pesos(d.p.saldo_capital)}, cuota ${d.p.cuota_actual} de ${d.p.cuotas_total}`]),
+      ["Tarjetas de crédito", dolares(tar), "Solo lo que no figura pagado"]], ["Total", dolares(totDeu + tar)]);
     const prestUva = (pr.data || []).filter((p) => p.indexacion === "uva");
     const uva = uvaQ.data[0];
 
@@ -1276,14 +1398,18 @@ async function verPatrimonio() {
         <span class="tenue">${t ? `Último: ${t.tipo} del ${dm(t.fecha)}` : "Todavía no hay dólar cargado"}${uva ? ` · UVA ${fmt.format(uva.venta)} del ${dm(uva.fecha)}` : ""}</span>
       </div>
       <div class="cifras">
-        ${cifra("Patrimonio neto", dolares(neto), "Activos + liquidez − deudas", "total")}
-        ${cifra("Liquidez", dolares(liq))}
-        ${cifra("Bienes e inversiones", dolares(totAct), totInv ? `Inversiones ${dolares(totInv)}` : "")}
-        ${cifra("Deudas", dolares(totDeu + tar), "Préstamos y tarjetas")}
+        ${cifra("Patrimonio neto", dolares(neto), "Activos + liquidez − deudas", "total", detNeto)}
+        ${cifra("Liquidez", dolares(liq), "", "", detLiq)}
+        ${cifra("Bienes e inversiones", dolares(totAct), totInv ? `Inversiones ${dolares(totInv)}` : "", "", detBienes)}
+        ${cifra("Deudas", dolares(totDeu + tar), "Préstamos y tarjetas", "", detDeudas)}
+      </div>
+      <div class="dos">
+        <div class="panel"><h3>Composición</h3><div class="lienzo chico"><canvas id="gPat"></canvas></div></div>
+        <div class="panel"><h3>Activos y deudas</h3><div class="lienzo chico"><canvas id="gPatBal"></canvas></div></div>
       </div>
       <div class="dos">
         <div class="panel"><h3>Bienes e inversiones</h3><table class="mini"><tbody>
-          ${bienes.map((a) => `<tr><td>${esc(a.nombre)}<div class="tenue">${a.estimado ? "Estimado con el interés devengado" : `${esc(a.ult.fuente)}, ${dm(a.ult.fecha)}${a.ult.valor_min != a.ult.valor_max ? ` (rango ${conMoneda(a.ult.valor_min, a.ult.moneda)} a ${conMoneda(a.ult.valor_max, a.ult.moneda)})` : ""}`}</div></td><td class="num">${dolares(a.usd)}</td></tr>`).join("")}
+          ${activos.map((a) => `<tr><td>${esc(a.nombre)} <button class="link" data-editar-activo="${a.id}" type="button">Editar</button><div class="tenue">${esc(TIPOS_BIEN[a.tipo] ?? "")}${a.valor == null ? " · sin valuación" : a.estimado ? " · estimado con el interés devengado" : ` · ${esc(a.ult.fuente)}, ${dm(a.ult.fecha)}${a.ult.valor_min != a.ult.valor_max ? ` (rango ${conMoneda(a.ult.valor_min, a.ult.moneda)} a ${conMoneda(a.ult.valor_max, a.ult.moneda)})` : ""}`}</div></td><td class="num">${a.valor == null ? "—" : dolares(a.usd)}</td></tr>`).join("")}
           <tr><td>Liquidez (cuentas y efectivo)</td><td class="num">${dolares(liq)}</td></tr>
         </tbody></table></div>
         <div class="panel"><h3>Deudas</h3><table class="mini"><tbody>
@@ -1336,6 +1462,15 @@ async function verPatrimonio() {
           <div class="acciones"><button id="uvaCalc" type="button">Calcular</button></div>
         </div><div id="uvaRes"></div></div>` : ""}`;
 
+    const comp = [["Liquidez", liq], ...porTipo].filter((x) => x[1] > 0);
+    grafico("gPat", { type: "doughnut", data: { labels: comp.map((x) => x[0]),
+      datasets: [{ data: comp.map((x) => Math.round(x[1])), backgroundColor: paleta(comp.length), borderColor: css("--papel"), borderWidth: 2 }] },
+      options: opcionesDona(dolares) });
+    grafico("gPatBal", { type: "bar", data: { labels: ["Activos", "Deudas", "Neto"], datasets: [{ data: [Math.round(liq + totAct), Math.round(-(totDeu + tar)), Math.round(neto)],
+        backgroundColor: [css("--marca"), css("--sale"), css("--laton")], borderRadius: 6, maxBarThickness: 64 }] },
+      options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => " " + dolares(c.raw) } } },
+                 scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { callback: (x) => dolares(x) } } } } });
+    $("pat-c").querySelectorAll("[data-editar-activo]").forEach((b) => b.onclick = () => editarActivo(activos.find((a) => a.id === +b.dataset.editarActivo)));
     $("tcBtn").onclick = async () => {
       const n = numeroAR($("tcIn").value);
       if (!n) return;
@@ -1394,6 +1529,35 @@ async function verPatrimonio() {
   } catch (e) { $("pat-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
 }
 
+// Editar un bien o inversión: nombre, tipo y notas; o darlo de baja si no tiene movimientos ni préstamos
+function editarActivo(a) {
+  const tipos = { inmueble: "Inmueble", vehiculo: "Vehículo", otro: "Otro bien", inversion: "Inversión" };
+  abrirVentana("Editar " + a.nombre, `<div class="form-grid">
+      <div><label for="eaNombre">Nombre</label><input id="eaNombre" type="text" value="${esc(a.nombre)}"></div>
+      <div><label for="eaTipo">Tipo</label><select id="eaTipo">${Object.entries(tipos).map(([k, n]) => `<option value="${k}" ${k === a.tipo ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+      ${a.tipo === "inversion" ? `<div><label for="eaSub">Clase de inversión</label><select id="eaSub">${Object.entries(SUBTIPOS).map(([k, n]) => `<option value="${k}" ${k === a.subtipo ? "selected" : ""}>${n}</option>`).join("")}</select></div>` : ""}
+      <div style="grid-column:1/-1"><label for="eaNotas">Notas</label><input id="eaNotas" type="text" value="${esc(a.notas ?? "")}"></div>
+      <div class="acciones"><button id="eaGuardar" type="button">Guardar</button><button class="sec" id="eaBorrar" type="button">Dar de baja</button><span id="eaMsg" class="tenue"></span></div>
+    </div>`);
+  $("eaGuardar").onclick = async () => {
+    const nombre = $("eaNombre").value.trim();
+    if (!nombre) return ($("eaMsg").textContent = "El nombre no puede quedar vacío.");
+    const tipo = $("eaTipo").value;
+    const { error } = await sb.from("activos").update({ nombre, tipo, notas: $("eaNotas").value.trim() || null,
+      subtipo: tipo === "inversion" ? ($("eaSub")?.value ?? a.subtipo ?? "otro") : null }).eq("id", a.id);
+    if (error) return ($("eaMsg").textContent = error.message.includes("duplicate") ? "Ya hay un bien con ese nombre." : error.message);
+    $("detalle").close(); await cargarReferencias(); verPatrimonio();
+  };
+  $("eaBorrar").onclick = async () => {
+    if (!confirm(`¿Dar de baja "${a.nombre}"? Se borran también sus valuaciones.`)) return;
+    await sb.from("compromisos").delete().eq("activo_id", a.id).eq("tipo", "otro");
+    const { error } = await sb.from("activos").delete().eq("id", a.id);
+    if (error) return ($("eaMsg").textContent = /foreign key|violates/i.test(error.message)
+      ? "Tiene movimientos, reglas o un préstamo asociados: no se puede borrar. Puedes renombrarlo (por ejemplo, agregando \"(vendido)\")." : error.message);
+    $("detalle").close(); await cargarReferencias(); verPatrimonio();
+  };
+}
+
 // Sistema francés: cuota = S·i / (1 − (1+i)^−n). Precancelar baja la cuota (mismo plazo) o acorta el plazo (misma cuota).
 function precancelacion({ saldo, restantes: n, tna, monto, uva, liquidez, gastoMes }) {
   if (monto >= saldo) return `<p class="tenue">El monto cancela todo el saldo (${pesos(saldo)}).</p>`;
@@ -1441,11 +1605,11 @@ async function verPendientes() {
 
     $("pend-c").innerHTML = `
       <div class="cifras">
-        ${cifra("Para revisar", revisar.data.length, "Sin clasificar, sin identificar, sugeridos o probables", "total")}
-        ${cifra("Salidas sin contraparte", transito.data.length, "Transferencias o pagos que no aparecen del otro lado")}
-        ${cifra("Entradas sin contraparte", internasPend.data.length, "Por ejemplo, transferencias desde cuentas aún no cargadas")}
+        ${cifra("Para revisar", revisar.data.length, "Sin clasificar, sin identificar, sugeridos o probables", "total", { ir: "#pRevisar" })}
+        ${cifra("Salidas sin contraparte", transito.data.length, "Transferencias o pagos que no aparecen del otro lado", "", { ir: "#pSalidas" })}
+        ${cifra("Entradas sin contraparte", internasPend.data.length, "Por ejemplo, transferencias desde cuentas aún no cargadas", "", { ir: "#pSalidas" })}
       </div>
-      <div class="panel"><h3>Para revisar</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
+      <div class="panel" id="pRevisar"><h3>Para revisar</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
         ${revisar.data.map((m) => `<tr data-id="${m.id}"><td>${dm(m.fecha)}</td>
           <td class="d">${esc(m.descripcion_original)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${m.rubro_id ? esc(rubroDe(m.rubro_id)?.nombre) + " (" + m.confianza + ")" : "Sin clasificar"}${m.origen === "mail" ? ` <span class="chip" title="Se confirma cuando importes el resumen">por mail</span>` : ""}${m.notas ? `<br>${esc(m.notas)}` : ""}</div></td>
           <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td>
@@ -1461,7 +1625,7 @@ async function verPendientes() {
           <td class="num menos">${conMoneda(a.datos.monto, a.datos.moneda)}</td>
           <td><button class="sec" data-descartar type="button">Descartar</button></td></tr>`).join("")}</tbody></table></div>` : ""}
       <p class="tenue">Para emparejar a mano, marca una salida y una entrada que sean la misma transferencia o pago, y presiona "Emparejar".</p>
-      <div class="dos">
+      <div class="dos" id="pSalidas">
         <div class="panel"><h3>Salidas sin contraparte</h3><table class="mini"><tbody>
           ${transito.data.map((t) => `<tr><td><input type="radio" name="parS" value="${t.id}" aria-label="Elegir salida"></td><td>${dm(t.fecha)}</td><td>${esc(cuentaDe(t.cuenta_id)?.alias)}<div class="tenue">${esc(t.descripcion_original)}</div></td><td class="num menos">${conMoneda(t.monto, t.moneda)}</td></tr>`).join("") || `<tr><td class="tenue">Todo emparejado.</td></tr>`}
         </tbody></table></div>
@@ -1535,9 +1699,13 @@ async function verEfectivo(aviso = "") {
     $("efe-c").innerHTML = `${aviso}
       <div class="cifras">${cajas.map((c) => {
         const s = ss.find((x) => x.cuenta_id === c.id), a = arq.data.find((x) => x.cuenta_id === c.id);
+        const ms = movs.data.filter((m) => m.cuenta_id === c.id);
+        const det = (ms.length ? tablaDetalle(ms.map((m) => [`${dm(m.fecha)} · ${esc(m.descripcion_original)}`, `<span class="${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</span>`,
+            `${esc(rubroDe(m.rubro_id)?.nombre ?? "Sin clasificar")}, ${esc(nombrePersona(m.persona_id))}`])) : `<p class="tenue">Sin movimientos recientes.</p>`)
+          + `<p class="tenue">${s ? `El saldo parte del ${s.fuente === "arqueo" ? "arqueo" : "saldo"} del ${dm(s.confirmado_al)} y suma lo anotado después.` : "Todavía no tiene arqueo."}</p>`;
         return cifra(esc(c.alias), s ? conMoneda(s.saldo_estimado, c.moneda) : "—",
           s ? (a ? `Último arqueo ${dm(a.fecha)}${Number(a.diferencia) ? `, diferencia ${conMoneda(a.diferencia, c.moneda)}` : ", sin diferencia"}` : `Desde el ${dm(s.confirmado_al)}`)
-            : "Haz un arqueo para fijar el punto de partida", "total");
+            : "Haz un arqueo para fijar el punto de partida", "total", det);
       }).join("")}</div>
       <div class="dos">
         <div class="panel"><h3>Anotar un gasto o ingreso en efectivo</h3>
