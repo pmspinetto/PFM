@@ -184,3 +184,12 @@ try { await regBandeja({ hash: "no-es-un-hash", archivo_path: "x.pdf" }); } catc
 await run(`update bandeja set estado = 'revisar', nota = 'No concilia'`);
 console.log("F alerta:", (await db.query("select titulo, detalle from alertas_calcular() where tipo = 'bandeja'")).rows[0],
   "| bucket:", (await db.query("select id, public from storage.buckets")).rows[0]);
+
+// V) Un ingreso mensual cargado hace 2 años sigue proyectándose en los próximos 12 meses
+await run(`delete from compromisos;
+  insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima) values
+  ('Sueldo', 'otro', 1000000, 'ARS', 'mensual', (current_date - interval '24 months')::date + 1),
+  ('Seguro anual', 'seguro', -50000, 'ARS', 'anual', (current_date - interval '3 years')::date + 10),
+  ('Pago único', 'otro', -1, 'ARS', 'unica', current_date + 5);`);
+console.log("V próximos 12 meses:", (await db.query(`select descripcion, count(*)::int as n from v_flujo_proyectado
+  where fecha between current_date and current_date + interval '12 months' group by 1 order by 1`)).rows);

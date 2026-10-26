@@ -99,6 +99,10 @@ dialog#detalle::backdrop{background:rgba(15,25,20,.45)}
 .barra{height:6px;border-radius:3px;background:var(--marca-2);overflow:hidden;margin-top:.3rem}
 .barra>span{display:block;height:100%;background:var(--marca)}
 .lienzo.chico{height:260px}
+.como{margin-top:1.25rem;padding:.9rem 1rem;background:var(--papel-2);border:1px solid var(--renglon);border-radius:var(--radio);font-size:.86rem;line-height:1.55}
+.como h4{margin:0 0 .4rem;font-size:.78rem;text-transform:uppercase;letter-spacing:.06em;color:var(--tinta-3)}
+.como p{margin:.35rem 0}.como ul{margin:.35rem 0;padding-left:1.15rem}.como li{margin:.15rem 0}
+.como code{font-family:inherit;font-weight:600;color:var(--tinta)}
 .link{background:none;border:0;padding:0;color:var(--marca);font-weight:600;font-size:.8rem;cursor:pointer;text-decoration:underline}
 .dos{display:grid;grid-template-columns:1fr 1fr;gap:1.25rem}
 .panel{background:var(--papel);border:1px solid var(--renglon);border-radius:var(--radio);padding:1.15rem 1.25rem;margin-bottom:1.25rem;box-shadow:var(--sombra)}
@@ -821,18 +825,23 @@ async function saldos() {
 // (puede ser async y recibir el contenedor para dibujar un gráfico) o { ir: "#selector" } para saltar ahí.
 const detalles = {};
 let detSeq = 0;
-function cifra(lbl, val, sub = "", clase = "", det = null) {
+function cifra(lbl, val, sub = "", clase = "", det = null, como = "") {
   let extra = "";
-  if (det) { const id = "d" + ++detSeq; detalles[id] = { titulo: lbl, det }; extra = ` click" data-det="${id}" role="button" tabindex="0`; }
+  if (det || como) { const id = "d" + ++detSeq; detalles[id] = { titulo: lbl, det, como }; extra = ` click" data-det="${id}" role="button" tabindex="0`; }
   return `<div class="cifra ${clase}${extra}"><div class="lbl">${lbl}</div><div class="val">${val}</div>${sub ? `<div class="sub">${sub}</div>` : ""}</div>`;
 }
 async function abrirDetalle(id) {
   const d = detalles[id]; if (!d) return;
-  if (d.det.ir) return document.querySelector(d.det.ir)?.scrollIntoView({ behavior: "smooth", block: "start" });
+  const como = d.como ? `<div class="como"><h4>¿Cómo se calcula?</h4>${d.como}</div>` : "";
   $("detTitulo").textContent = d.titulo;
-  $("detCuerpo").innerHTML = typeof d.det === "function" ? `<p class="tenue">Cargando…</p>` : d.det;
+  if (d.det?.ir) {
+    $("detCuerpo").innerHTML = `<button id="detIr" type="button">Ver en la página</button>${como}`;
+    $("detIr").onclick = () => { $("detalle").close(); document.querySelector(d.det.ir)?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+  } else {
+    $("detCuerpo").innerHTML = `<div id="detCont">${typeof d.det === "function" ? `<p class="tenue">Cargando…</p>` : d.det ?? ""}</div>${como}`;
+  }
   if (!$("detalle").open) $("detalle").showModal();
-  if (typeof d.det === "function") $("detCuerpo").innerHTML = await d.det($("detCuerpo")) ?? $("detCuerpo").innerHTML;
+  if (typeof d.det === "function") $("detCont").innerHTML = await d.det($("detCont")) ?? $("detCont").innerHTML;
 }
 function abrirVentana(titulo, html) {
   $("detTitulo").textContent = titulo; $("detCuerpo").innerHTML = html;
@@ -842,6 +851,47 @@ document.addEventListener("click", (e) => { const c = e.target.closest("[data-de
 document.addEventListener("keydown", (e) => { if (e.key === "Enter" && e.target.dataset?.det) abrirDetalle(e.target.dataset.det); });
 $("detCerrar").onclick = () => $("detalle").close();
 $("detalle").addEventListener("click", (e) => { if (e.target === $("detalle")) $("detalle").close(); });
+
+// Explicación de cada indicador ("¿Cómo se calcula?")
+const SALDO_CUENTA = `<p>El saldo de cada cuenta es <code>último saldo conocido + movimientos posteriores</code>. El último saldo conocido es el más reciente entre el saldo final de un resumen, un saldo que cargaste en "Actualizar saldos" o un arqueo (en efectivo).</p>`;
+const COMO = {
+  dispPesos: `<p><code>Disponible en pesos = Σ saldo de las cuentas en pesos que no son tarjetas</code> (cajas de ahorro, cuentas sueldo y corrientes, billeteras y cajas de efectivo).</p>${SALDO_CUENTA}`,
+  dispUsd: `<p><code>Disponible en dólares = Σ saldo de las cuentas en dólares que no son tarjetas</code>.</p>${SALDO_CUENTA}`,
+  deudaTar: `<p>Por tarjeta y por moneda:</p><ul>
+    <li>Si cargaste un saldo informado: <code>deuda = saldo informado + consumos posteriores</code>.</li>
+    <li>Si no, se parte del último resumen: <code>deuda = saldo del resumen + consumos posteriores al cierre</code>, pero el saldo del resumen deja de contar (se da por pagado) si no tenía deuda, si aparece en una cuenta un pago de tarjeta posterior al cierre por el mismo importe, o si ya pasó el vencimiento (débito automático). Sin vencimiento registrado se toma cierre + 15 días.</li></ul>
+    <p>Se suman todas las tarjetas, separando pesos y dólares. Abajo se muestra el vencimiento más próximo.</p>`,
+  netoHoy: `<p><code>Neto = (disponible en pesos + deuda neta de tarjetas en pesos) ÷ dólar MEP + disponible en dólares + deuda neta de tarjetas en dólares</code>.</p>
+    <p>La deuda neta es como la deuda de tarjetas, pero un resumen solo se descuenta si el pago ya figura en una cuenta (no por haber vencido), para no contar dos veces la plata que todavía figura como disponible. No incluye bienes ni préstamos (eso está en Patrimonio). El dólar es el último MEP registrado.</p>`,
+  gasto: `<p><code>Gasto total = Σ (−importe en pesos)</code> de los movimientos del período con rubro de tipo <b>gasto</b>, con los filtros elegidos.</p><ul>
+    <li>Si un movimiento tiene desglose (por ejemplo, la cuota hipotecaria en intereses, capital y seguro), cuenta cada parte con su rubro.</li>
+    <li>Los movimientos en dólares se pasan a pesos con su propio tipo de cambio; los que no lo tienen no suman.</li>
+    <li>Recurrente y extraordinario se separan según la marca "extraordinario" de cada movimiento.</li>
+    <li>No cuentan los rubros neutros (transferencias internas, pagos de tarjeta, movimientos de efectivo) ni los movimientos sin rubro.</li>
+    <li>Las cuotas de tarjeta cuentan en el mes en que cierra el resumen que las trae.</li></ul>`,
+  recurrente: `<p><code>Variación = (gasto recurrente del período − gasto recurrente del período anterior) ÷ gasto recurrente del período anterior × 100</code>.</p><p>El período anterior tiene la misma duración (1, 3, 6 o 12 meses) y termina justo antes. Los gastos marcados como extraordinarios no se comparan.</p>`,
+  ingresos: `<p><code>Ingresos = Σ importe en pesos</code> de los movimientos del período con rubro de tipo <b>ingreso</b> (sueldos, alquileres cobrados, rendimientos…), con los filtros elegidos. Las transferencias entre cuentas propias no son ingresos.</p>`,
+  ahorro: `<p><code>Ahorro = Σ (−importe en pesos)</code> de los movimientos del período con rubro de tipo <b>ahorro</b>: la parte de capital de las cuotas de préstamos (que reduce la deuda) y lo invertido.</p>`,
+  dispViene: `<p><code>Disponible hoy = Σ saldo de las cuentas en pesos que no son tarjetas</code>, igual que en Hoy. Es el punto de partida del saldo proyectado. Los dólares no entran en esta proyección.</p>`,
+  egresos: `<p><code>Egresos = Σ |importe|</code> de los compromisos negativos en pesos que vencen en los próximos 60 días.</p><ul>
+    <li>Los compromisos mensuales se repiten cada mes desde su primera fecha; los anuales, cada año; los únicos, una vez.</li>
+    <li>Cada resumen de tarjeta agenda su vencimiento con el saldo a pagar y los próximos con las cuotas ya conocidas.</li>
+    <li>Los que ajustan por UVA se proyectan con el importe cargado, sin indexar.</li></ul>`,
+  ingresosEsp: `<p><code>Ingresos esperados = Σ importe</code> de los compromisos positivos en pesos de los próximos 60 días (por ejemplo, alquileres a cobrar o el vencimiento de un plazo fijo).</p>`,
+  minimo: `<p>El saldo proyectado arranca en el disponible de hoy y, en orden de fecha, suma o resta cada compromiso: <code>saldo después = saldo anterior + importe del compromiso</code>.</p><p><code>Saldo más bajo = mínimo de esa serie</code>, incluido el saldo de hoy. Si es negativo, antes de esa fecha vas a necesitar fondos.</p>`,
+  patNeto: `<p><code>Patrimonio neto = liquidez + bienes e inversiones − deudas</code>, todo en dólares al último MEP.</p><p>Los préstamos restan su saldo de capital; las tarjetas, su deuda neta (solo se descuentan los pagos que ya figuran en una cuenta).</p>`,
+  liquidez: `<p><code>Liquidez = Σ saldo de las cuentas que no son tarjetas</code>, pasadas a dólares: <code>pesos ÷ MEP</code>; las cuentas en dólares, tal cual.</p>${SALDO_CUENTA}`,
+  bienes: `<p><code>Bienes e inversiones = Σ valor de cada bien</code>, en dólares.</p><ul>
+    <li>El valor es la última valuación cargada: <code>(mínimo + máximo) ÷ 2</code>, pasada a dólares si está en pesos.</li>
+    <li>Un plazo fijo sin una valuación posterior a su constitución vale <code>capital × (1 + TNA ÷ 100 × días transcurridos ÷ 365)</code>, hasta su vencimiento.</li>
+    <li>Los bienes sin valuación no suman.</li></ul>`,
+  deudas: `<p><code>Deudas = Σ saldo de capital de cada préstamo ÷ MEP + deuda neta de tarjetas</code>.</p><p>El saldo de capital del préstamo se actualiza con cada resumen importado. La deuda neta de tarjetas solo descuenta los pagos que ya figuran en una cuenta.</p>`,
+  revisar: `<p>Cuenta los movimientos que necesitan tu atención: <b>sin rubro</b>, con el rubro <b>"Sin identificar"</b>, o con confianza <b>"sugerido"</b> (lo propuso una regla de sugerencia o un aviso que el resumen no confirmó) o <b>"probable"</b> (por ejemplo, los que llegaron por mail y todavía no confirmó el resumen). Se muestran hasta 200.</p>`,
+  salidas: `<p>Cuenta las salidas internas (transferencias entre cuentas propias, pagos de tarjeta, retiros de efectivo) que todavía no tienen emparejada la entrada del otro lado. Se emparejan solas al importar el resumen de la otra cuenta (mismo importe, otra cuenta, hasta 5 días de diferencia) o a mano en esta pantalla.</p>`,
+  entradas: `<p>Cuenta los ingresos con rubro interno (por ejemplo, una transferencia recibida desde una cuenta propia) que siguen sin su salida emparejada. Suele pasar cuando la cuenta de origen todavía no está cargada.</p>`,
+  caja: `<p><code>Saldo de la caja = último arqueo + Σ gastos e ingresos anotados después</code> (incluidos los retiros de cajero que traen los resúmenes del banco).</p>
+    <p>En cada arqueo: <code>diferencia = monto contado − (saldo del arqueo anterior + movimientos hasta la fecha del arqueo)</code>. La diferencia se registra como "Efectivo no identificado" y el saldo pasa a ser lo contado.</p>`,
+};
 
 // Tabla de detalle: filas [etiqueta, valor, sub?, proporción 0..1?] y total opcional
 function tablaDetalle(filas, total = null) {
@@ -966,11 +1016,11 @@ async function verHoy() {
       ${alertas.length ? `<div class="msg info"><strong>Alertas (${alertas.length})</strong>
         <ul style="margin:.4rem 0 0;padding-left:1.2rem">${alertas.map((a) => `<li>${esc(a.titulo)}${a.monto != null && a.tipo !== "saldo_insuficiente" ? ` · ${conMoneda(Math.abs(a.monto), a.moneda)}` : ""}${a.detalle ? ` <span class="tenue">(${esc(a.detalle)})</span>` : ""}</li>`).join("")}</ul></div>` : ""}
       <div class="cifras">
-        ${cifra("Disponible en pesos", pesos(dispARS), "Cuentas, billeteras y efectivo", "total", detCuentas(liq, "ARS"))}
-        ${cifra("Disponible en dólares", dolares(dispUSD), "", "", detCuentas(liq, "USD"))}
-        ${cifra("Deuda de tarjetas", pesos(deuARS) + (deuUSD ? " + " + dolares(deuUSD) : ""), tarjetas.nota, "", detTarjetas)}
+        ${cifra("Disponible en pesos", pesos(dispARS), "Cuentas, billeteras y efectivo", "total", detCuentas(liq, "ARS"), COMO.dispPesos)}
+        ${cifra("Disponible en dólares", dolares(dispUSD), "", "", detCuentas(liq, "USD"), COMO.dispUsd)}
+        ${cifra("Deuda de tarjetas", pesos(deuARS) + (deuUSD ? " + " + dolares(deuUSD) : ""), tarjetas.nota, "", detTarjetas, COMO.deudaTar)}
         ${cifra("Neto total en dólares", netoUSD == null ? "—" : dolares(netoUSD),
-                t ? `Dólar ${t.tipo} ${pesos(t.valor)} del ${dm(t.fecha)}` : "Carga el dólar en Patrimonio", "", detNeto)}
+                t ? `Dólar ${t.tipo} ${pesos(t.valor)} del ${dm(t.fecha)}` : "Carga el dólar en Patrimonio", "", detNeto, COMO.netoHoy)}
       </div>
       <div class="dos">
         <div class="panel"><h3>Saldos por cuenta</h3><div class="tabla" style="border:0"><table class="mini">
@@ -1128,10 +1178,10 @@ async function verMes() {
 
     $("mes-c").innerHTML = `
       <div class="cifras">
-        ${cifra(n === 1 ? "Gasto total" : `Gasto total (${periodo})`, pesos(r.gasto), `Recurrente ${pesos(r.recurrente)}, extraordinario ${pesos(r.extra)}`, "total", detGasto)}
-        ${cifra(`Gasto recurrente vs. ${n === 1 ? "mes anterior" : `los ${periodo} anteriores`}`, varPct == null ? "—" : (varPct >= 0 ? "+" : "−") + Math.abs(varPct).toFixed(1).replace(".", ",") + "%", `Antes: ${pesos(p.recurrente)}`, "", detComparar)}
-        ${cifra("Ingresos", pesos(r.ingreso), "", "", detRubros(r.ingRub, r.ingreso, "No hay ingresos en el período."))}
-        ${cifra("Ahorro", pesos(r.ahorro), "Capital de préstamos e inversiones", "", detRubros(r.ahoRub, r.ahorro, "No hay ahorro en el período."))}
+        ${cifra(n === 1 ? "Gasto total" : `Gasto total (${periodo})`, pesos(r.gasto), `Recurrente ${pesos(r.recurrente)}, extraordinario ${pesos(r.extra)}`, "total", detGasto, COMO.gasto)}
+        ${cifra(`Gasto recurrente vs. ${n === 1 ? "mes anterior" : `los ${periodo} anteriores`}`, varPct == null ? "—" : (varPct >= 0 ? "+" : "−") + Math.abs(varPct).toFixed(1).replace(".", ",") + "%", `Antes: ${pesos(p.recurrente)}`, "", detComparar, COMO.recurrente)}
+        ${cifra("Ingresos", pesos(r.ingreso), "", "", detRubros(r.ingRub, r.ingreso, "No hay ingresos en el período."), COMO.ingresos)}
+        ${cifra("Ahorro", pesos(r.ahorro), "Capital de préstamos e inversiones", "", detRubros(r.ahoRub, r.ahorro, "No hay ahorro en el período."), COMO.ahorro)}
       </div>
       ${r.sinTc ? `<div class="msg info">${r.sinTc} movimientos en dólares no tienen tipo de cambio y no suman al total.</div>` : ""}
       ${act.length ? "" : `<div class="msg info">No hay movimientos cargados para este período y filtros.</div>`}
@@ -1224,13 +1274,16 @@ async function detalleGastos(lineas) {
 async function verViene() {
   try {
     const hoy = hoyISO(), fin = sumarDias(hoy, 60);
-    const [ss, fl, cq] = await Promise.all([
+    const [ss, fl, cq, fq] = await Promise.all([
       saldos(),
       sb.from("v_flujo_proyectado").select("*").gte("fecha", hoy).lte("fecha", fin).order("fecha"),
       sb.from("movimientos").select("cuenta_id, fecha, descripcion_original, monto, moneda, cuota_nro, cuotas_total")
         .not("cuotas_total", "is", null).gte("fecha", sumarDias(hoy, -75)).lt("monto", 0),
+      sb.from("compromisos").select("*").eq("activo", true).neq("tipo", "vencimiento_tarjeta").order("fecha_proxima"),
     ]);
     if (fl.error) throw fl.error;
+    if (fq.error) throw fq.error;
+    const fijos = fq.data;
     if (cq.error) throw cq.error;
     // Cuotas que terminan: del último resumen de cada tarjeta, en qué mes se paga la última cuota
     const ultimo = {};
@@ -1259,10 +1312,10 @@ async function verViene() {
 
     $("viene-c").innerHTML = `
       <div class="cifras">
-        ${cifra("Disponible hoy en pesos", pesos(inicial), "", "total", detDisp)}
-        ${cifra("Egresos comprometidos (60 días)", pesos(egresos), "", "", detFlujo((f) => f.monto < 0, "No hay egresos comprometidos."))}
-        ${cifra("Ingresos esperados (60 días)", pesos(ingresos), "", "", detFlujo((f) => f.monto > 0, "No hay ingresos esperados."))}
-        ${cifra("Saldo más bajo proyectado", pesos(minimo), minimo < 0 ? "Vas a necesitar fondos antes de esa fecha" : fMin ? `El ${dm(fMin)}` : "", "", detFlujo((f) => !fMin || f.fecha <= fMin, "No hay movimientos proyectados."))}
+        ${cifra("Disponible hoy en pesos", pesos(inicial), "", "total", detDisp, COMO.dispViene)}
+        ${cifra("Egresos comprometidos (60 días)", pesos(egresos), "", "", detFlujo((f) => f.monto < 0, "No hay egresos comprometidos."), COMO.egresos)}
+        ${cifra("Ingresos esperados (60 días)", pesos(ingresos), "", "", detFlujo((f) => f.monto > 0, "No hay ingresos esperados."), COMO.ingresosEsp)}
+        ${cifra("Saldo más bajo proyectado", pesos(minimo), minimo < 0 ? "Vas a necesitar fondos antes de esa fecha" : fMin ? `El ${dm(fMin)}` : "", "", detFlujo((f) => !fMin || f.fecha <= fMin, "No hay movimientos proyectados."), COMO.minimo)}
       </div>
       <div class="panel"><h3>Saldo proyectado</h3><div class="lienzo"><canvas id="gViene"></canvas></div></div>
       <div class="panel"><h3>Próximos vencimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
@@ -1271,6 +1324,14 @@ async function verViene() {
           `<tr><td class="tenue">No hay compromisos cargados en los próximos 60 días.</td></tr>`}
       </tbody></table></div>
       <p class="tenue">Incluye hipoteca, alquiler, seguros y expensas cargados como compromisos, el vencimiento de cada resumen de tarjeta importado y las cuotas que quedan de cada compra en cuotas (estimado: los consumos nuevos se suman cuando cierra cada resumen).</p></div>
+      <div class="panel" id="pFijos"><h3>Ingresos y gastos fijos</h3>
+        <p class="tenue" style="margin-top:0">Sueldos, alquileres que cobras o pagas, colegio, seguros, servicios… Lo que cargues acá entra en el saldo proyectado, en las alertas de vencimiento y en el control de pagos duplicados o faltantes. Los vencimientos de tarjeta los agenda solo cada resumen.</p>
+        <table class="mini"><tbody>
+          ${fijos.map((k) => `<tr><td>${esc(k.descripcion)}<div class="tenue">${FRECUENCIAS[k.frecuencia]}${k.frecuencia === "unica" ? ` el ${dm(k.fecha_proxima)}` : `, desde el ${dm(k.fecha_proxima)}`}${k.fecha_fin ? ` hasta el ${dm(k.fecha_fin)}` : ""}${k.rubro_id ? ` · ${esc(rubroDe(k.rubro_id)?.nombre ?? "")}` : ""}${k.indexacion === "uva" ? " · ajusta por UVA" : k.indexacion === "estimado" ? " · estimado" : ""}</div></td>
+            <td class="num ${k.monto < 0 ? "menos" : "mas"}">${conMoneda(k.monto, k.moneda)}</td>
+            <td><button class="link" data-editar-fijo="${k.id}" type="button">Editar</button></td></tr>`).join("") || `<tr><td class="tenue">Todavía no cargaste ingresos ni gastos fijos.</td></tr>`}
+        </tbody></table>
+        <button style="margin-top:.75rem" id="btnFijo" type="button">Agregar ingreso o gasto fijo</button></div>
       <div class="panel"><h3>Cuotas que terminan</h3><table class="mini"><tbody>
         ${mesesFin.map((ym) => {
           const ms = terminan[ym], porMon = (mon) => -ms.filter((m) => m.moneda === mon).reduce((a, m) => a + Number(m.monto), 0);
@@ -1280,6 +1341,8 @@ async function verViene() {
         }).join("") || `<tr><td class="tenue">No hay compras en cuotas en los últimos resúmenes.</td></tr>`}
       </tbody></table></div>`;
 
+    $("btnFijo").onclick = () => editarFijo(null);
+    $("viene-c").querySelectorAll("[data-editar-fijo]").forEach((b) => b.onclick = () => editarFijo(fijos.find((k) => k.id === +b.dataset.editarFijo)));
     const ctxV = document.getElementById("gViene").getContext("2d");
     const relleno = ctxV.createLinearGradient(0, 0, 0, 320);
     relleno.addColorStop(0, css("--marca") + "55"); relleno.addColorStop(1, css("--marca") + "05");
@@ -1297,6 +1360,54 @@ async function verViene() {
                  scales: { x: { grid: { display: false } }, y: { ticks: { callback: (v) => pesos(v) } } } },
     });
   } catch (e) { $("viene-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// Alta y edición de ingresos y gastos fijos (tabla compromisos)
+const FRECUENCIAS = { mensual: "Todos los meses", anual: "Una vez por año", unica: "Una sola vez" };
+const TIPOS_FIJO = { otro: "Ingreso (sueldo, honorarios, otros)", alquiler: "Alquiler", servicio: "Servicio", seguro: "Seguro", expensas: "Expensas",
+                     educacion: "Educación", actividad: "Actividad", suscripcion: "Suscripción", prestamo: "Préstamo", cheque: "Cheque" };
+function editarFijo(k) {
+  const nuevo = !k; k = k ?? { descripcion: "", tipo: "otro", monto: 0, moneda: "ARS", frecuencia: "mensual", fecha_proxima: hoyISO(), indexacion: "ninguna" };
+  const signo = k.monto > 0 || nuevo ? 1 : -1;
+  abrirVentana(nuevo ? "Agregar ingreso o gasto fijo" : "Editar " + k.descripcion, `
+    <div class="alterna" role="group" aria-label="Tipo"><button type="button" data-signo="1" class="${signo > 0 ? "activo" : ""}">Ingreso</button><button type="button" data-signo="-1" class="${signo < 0 ? "activo" : ""}">Gasto</button></div>
+    <div class="form-grid">
+      <div style="grid-column:1/-1"><label for="fjDesc">Qué es</label><input id="fjDesc" type="text" value="${esc(k.descripcion)}" placeholder="Sueldo, alquiler del departamento, colegio…"></div>
+      <div><label for="fjMonto">Monto</label><input id="fjMonto" type="text" inputmode="decimal" value="${k.monto ? fmt.format(Math.abs(k.monto)) : ""}"></div>
+      <div><label for="fjMoneda">Moneda</label><select id="fjMoneda"><option value="ARS">Pesos</option><option value="USD" ${k.moneda === "USD" ? "selected" : ""}>Dólares</option></select></div>
+      <div><label for="fjFrec">Frecuencia</label><select id="fjFrec">${Object.entries(FRECUENCIAS).map(([v, n]) => `<option value="${v}" ${v === k.frecuencia ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+      <div><label for="fjFecha">Próxima fecha</label><input id="fjFecha" type="date" value="${k.fecha_proxima}"></div>
+      <div><label for="fjFin">Hasta (opcional)</label><input id="fjFin" type="date" value="${k.fecha_fin ?? ""}"></div>
+      <div><label for="fjTipo">Clase</label><select id="fjTipo">${Object.entries(TIPOS_FIJO).map(([v, n]) => `<option value="${v}" ${v === k.tipo ? "selected" : ""}>${n}</option>`).join("")}</select></div>
+      <div><label for="fjRubro">Rubro</label><select id="fjRubro">${opcionesRubro(k.rubro_id)}</select></div>
+      <div><label for="fjCuenta">Cuenta (opcional)</label><select id="fjCuenta">${opciones(ref.cuentas.filter((c) => c.activa), k.cuenta_id, "—")}</select></div>
+      <div><label for="fjActivo">Bien (opcional)</label><select id="fjActivo">${opciones(ref.activos, k.activo_id, "—")}</select></div>
+      <div><label for="fjIdx">El monto…</label><select id="fjIdx"><option value="ninguna">Es fijo</option><option value="estimado" ${k.indexacion === "estimado" ? "selected" : ""}>Es estimado</option><option value="uva" ${k.indexacion === "uva" ? "selected" : ""}>Ajusta por UVA</option></select></div>
+      <div class="acciones"><button id="fjGuardar" type="button">Guardar</button>${nuevo ? "" : `<button class="sec" id="fjBorrar" type="button">Quitar</button>`}<span id="fjMsg" class="tenue"></span></div>
+    </div>
+    <p class="tenue">El rubro sirve para el control de pagos: si un mes no aparece un pago de ese rubro por un importe parecido (±15%), o aparece dos veces, te avisa.</p>`);
+  let sg = signo;
+  $("detCuerpo").querySelectorAll("[data-signo]").forEach((b) => b.onclick = () => {
+    sg = +b.dataset.signo; $("detCuerpo").querySelectorAll("[data-signo]").forEach((x) => x.classList.toggle("activo", x === b));
+    if (sg > 0 && $("fjTipo").value !== "alquiler") $("fjTipo").value = "otro";
+  });
+  $("fjGuardar").onclick = async () => {
+    const monto = numeroAR($("fjMonto").value), desc = $("fjDesc").value.trim(), fecha = $("fjFecha").value;
+    if (!desc || !monto || !fecha) return ($("fjMsg").textContent = "Completa qué es, el monto y la próxima fecha.");
+    const val = (id) => ($(id).value ? +$(id).value : null);
+    const datos = { descripcion: desc, tipo: $("fjTipo").value, monto: sg * Math.abs(monto), moneda: $("fjMoneda").value,
+      frecuencia: $("fjFrec").value, fecha_proxima: fecha, fecha_fin: $("fjFin").value || null, indexacion: $("fjIdx").value,
+      rubro_id: val("fjRubro"), cuenta_id: val("fjCuenta"), activo_id: val("fjActivo"), activo: true };
+    const { error } = nuevo ? await sb.from("compromisos").insert(datos) : await sb.from("compromisos").update(datos).eq("id", k.id);
+    if (error) return ($("fjMsg").textContent = error.message);
+    $("detalle").close(); verViene();
+  };
+  if (!nuevo) $("fjBorrar").onclick = async () => {
+    if (!confirm(`¿Quitar "${k.descripcion}" de lo que viene?`)) return;
+    const { error } = await sb.from("compromisos").update({ activo: false }).eq("id", k.id);
+    if (error) return ($("fjMsg").textContent = error.message);
+    $("detalle").close(); verViene();
+  };
 }
 
 // ---------------- PATRIMONIO ----------------
@@ -1398,10 +1509,10 @@ async function verPatrimonio() {
         <span class="tenue">${t ? `Último: ${t.tipo} del ${dm(t.fecha)}` : "Todavía no hay dólar cargado"}${uva ? ` · UVA ${fmt.format(uva.venta)} del ${dm(uva.fecha)}` : ""}</span>
       </div>
       <div class="cifras">
-        ${cifra("Patrimonio neto", dolares(neto), "Activos + liquidez − deudas", "total", detNeto)}
-        ${cifra("Liquidez", dolares(liq), "", "", detLiq)}
-        ${cifra("Bienes e inversiones", dolares(totAct), totInv ? `Inversiones ${dolares(totInv)}` : "", "", detBienes)}
-        ${cifra("Deudas", dolares(totDeu + tar), "Préstamos y tarjetas", "", detDeudas)}
+        ${cifra("Patrimonio neto", dolares(neto), "Activos + liquidez − deudas", "total", detNeto, COMO.patNeto)}
+        ${cifra("Liquidez", dolares(liq), "", "", detLiq, COMO.liquidez)}
+        ${cifra("Bienes e inversiones", dolares(totAct), totInv ? `Inversiones ${dolares(totInv)}` : "", "", detBienes, COMO.bienes)}
+        ${cifra("Deudas", dolares(totDeu + tar), "Préstamos y tarjetas", "", detDeudas, COMO.deudas)}
       </div>
       <div class="dos">
         <div class="panel"><h3>Composición</h3><div class="lienzo chico"><canvas id="gPat"></canvas></div></div>
@@ -1605,9 +1716,9 @@ async function verPendientes() {
 
     $("pend-c").innerHTML = `
       <div class="cifras">
-        ${cifra("Para revisar", revisar.data.length, "Sin clasificar, sin identificar, sugeridos o probables", "total", { ir: "#pRevisar" })}
-        ${cifra("Salidas sin contraparte", transito.data.length, "Transferencias o pagos que no aparecen del otro lado", "", { ir: "#pSalidas" })}
-        ${cifra("Entradas sin contraparte", internasPend.data.length, "Por ejemplo, transferencias desde cuentas aún no cargadas", "", { ir: "#pSalidas" })}
+        ${cifra("Para revisar", revisar.data.length, "Sin clasificar, sin identificar, sugeridos o probables", "total", { ir: "#pRevisar" }, COMO.revisar)}
+        ${cifra("Salidas sin contraparte", transito.data.length, "Transferencias o pagos que no aparecen del otro lado", "", { ir: "#pSalidas" }, COMO.salidas)}
+        ${cifra("Entradas sin contraparte", internasPend.data.length, "Por ejemplo, transferencias desde cuentas aún no cargadas", "", { ir: "#pSalidas" }, COMO.entradas)}
       </div>
       <div class="panel" id="pRevisar"><h3>Para revisar</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
         ${revisar.data.map((m) => `<tr data-id="${m.id}"><td>${dm(m.fecha)}</td>
@@ -1705,7 +1816,7 @@ async function verEfectivo(aviso = "") {
           + `<p class="tenue">${s ? `El saldo parte del ${s.fuente === "arqueo" ? "arqueo" : "saldo"} del ${dm(s.confirmado_al)} y suma lo anotado después.` : "Todavía no tiene arqueo."}</p>`;
         return cifra(esc(c.alias), s ? conMoneda(s.saldo_estimado, c.moneda) : "—",
           s ? (a ? `Último arqueo ${dm(a.fecha)}${Number(a.diferencia) ? `, diferencia ${conMoneda(a.diferencia, c.moneda)}` : ", sin diferencia"}` : `Desde el ${dm(s.confirmado_al)}`)
-            : "Haz un arqueo para fijar el punto de partida", "total", det);
+            : "Haz un arqueo para fijar el punto de partida", "total", det, COMO.caja);
       }).join("")}</div>
       <div class="dos">
         <div class="panel"><h3>Anotar un gasto o ingreso en efectivo</h3>
