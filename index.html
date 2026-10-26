@@ -309,7 +309,7 @@ $("formLogin").addEventListener("submit", async (e) => {
 // ---------- Referencias ----------
 async function cargarReferencias() {
   const q = await Promise.all([
-    sb.from("cuentas").select("id, alias, persona_id, tipo, activa, numero, cbu_cvu, institucion_id").order("alias"),
+    sb.from("cuentas").select("id, alias, persona_id, tipo, moneda, activa, numero, cbu_cvu, institucion_id").order("alias"),
     sb.from("plasticos").select("id, cuenta_id, persona_id, ultimos4"),
     sb.from("rubros").select("id, nombre, padre_id, tipo, activo").order("id"),
     sb.from("activos").select("id, nombre").order("nombre"),
