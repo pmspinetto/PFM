@@ -1334,15 +1334,16 @@ async function verViene() {
       </div>
       <div class="panel"><h3>Flujo y saldo proyectado</h3><div class="lienzo" style="height:360px"><canvas id="gViene"></canvas></div></div>
       <div class="panel"><h3>Próximos vencimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
-        ${filas.map((f) => `<tr><td>${dm(f.fecha)}</td><td>${esc(f.descripcion)}${f.indexacion !== "ninguna" ? ` <span class="tenue">(${f.indexacion === "uva" ? "ajusta por UVA" : f.indexacion === "ipc" ? "ajustado por IPC, estimado" : "estimado"})</span>` : ""}</td>
-          <td class="num ${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</td><td class="num tenue">${pesos(f.saldo)}</td></tr>`).join("") ||
+        ${filas.map((f) => { const kk = fijos.find((x) => x.id === f.compromiso_id), nc = kk && cuotasDe(kk);
+          return `<tr><td>${dm(f.fecha)}</td><td>${esc(f.descripcion)}${nc ? ` <span class="chip">cuota ${cuotaNro(kk, f.fecha)} de ${nc}</span>` : ""}${f.indexacion !== "ninguna" ? ` <span class="tenue">(${f.indexacion === "uva" ? "ajusta por UVA" : f.indexacion === "ipc" ? "ajustado por IPC, estimado" : "estimado"})</span>` : ""}</td>
+          <td class="num ${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</td><td class="num tenue">${pesos(f.saldo)}</td></tr>`; }).join("") ||
           `<tr><td class="tenue">No hay compromisos cargados en ${hz === "1 semana" ? "la próxima semana" : `los próximos ${hz}`}.</td></tr>`}
       </tbody></table></div>
       <p class="tenue">Incluye hipoteca, alquiler, seguros y expensas cargados como compromisos, el vencimiento de cada resumen de tarjeta importado y las cuotas que quedan de cada compra en cuotas (estimado: los consumos nuevos se suman cuando cierra cada resumen).</p></div>
       <div class="panel" id="pFijos"><h3>Ingresos y gastos fijos</h3>
         <p class="tenue" style="margin-top:0">Sueldos, alquileres que cobras o pagas, colegio, seguros, servicios… Lo que cargues acá entra en el saldo proyectado, en las alertas de vencimiento y en el control de pagos duplicados o faltantes. Los vencimientos de tarjeta los agenda solo cada resumen.</p>
         <table class="mini"><tbody>
-          ${fijos.map((k) => `<tr><td>${esc(k.descripcion)}<div class="tenue">${FRECUENCIAS[k.frecuencia]}${k.frecuencia === "unica" ? ` el ${dm(k.fecha_proxima)}` : `, desde el ${dm(k.fecha_proxima)}`}${k.fecha_fin ? ` hasta el ${dm(k.fecha_fin)}` : ""}${k.rubro_id ? ` · ${esc(rubroDe(k.rubro_id)?.nombre ?? "")}` : ""}${k.indexacion === "uva" ? " · ajusta por UVA" : k.indexacion === "estimado" ? " · estimado" : k.indexacion === "ipc" ? ` · ajusta por IPC cada ${k.ajuste_cada ?? 3} meses (último ajuste ${(k.ultimo_ajuste ?? "").slice(5, 7)}/${(k.ultimo_ajuste ?? "").slice(0, 4)})` : ""}</div></td>
+          ${fijos.map((k) => `<tr><td>${esc(k.descripcion)}<div class="tenue">${FRECUENCIAS[k.frecuencia]}${k.frecuencia === "unica" ? ` el ${dm(k.fecha_proxima)}` : `, desde el ${dm(k.fecha_proxima)}`}${cuotasDe(k) ? ` · ${cuotasDe(k)} cuotas, la última el ${dm(k.fecha_fin)}/${k.fecha_fin.slice(2, 4)}` : k.fecha_fin ? ` hasta el ${dm(k.fecha_fin)}` : ""}${k.rubro_id ? ` · ${esc(rubroDe(k.rubro_id)?.nombre ?? "")}` : ""}${k.indexacion === "uva" ? " · ajusta por UVA" : k.indexacion === "estimado" ? " · estimado" : k.indexacion === "ipc" ? ` · ajusta por IPC cada ${k.ajuste_cada ?? 3} meses (último ajuste ${(k.ultimo_ajuste ?? "").slice(5, 7)}/${(k.ultimo_ajuste ?? "").slice(0, 4)})` : ""}</div></td>
             <td class="num ${k.monto < 0 ? "menos" : "mas"}">${conMoneda(k.monto, k.moneda)}</td>
             <td><button class="link" data-editar-fijo="${k.id}" type="button">Editar</button></td></tr>`).join("") || `<tr><td class="tenue">Todavía no cargaste ingresos ni gastos fijos.</td></tr>`}
         </tbody></table>
@@ -1405,10 +1406,24 @@ async function verViene() {
 
 // Alta y edición de ingresos y gastos fijos (tabla compromisos)
 const FRECUENCIAS = { mensual: "Todos los meses", trimestral: "Cada 3 meses", semestral: "Cada 6 meses", anual: "Cada 12 meses", unica: "Una sola vez" };
+const MESES_FREC = { mensual: 1, trimestral: 3, semestral: 6, anual: 12 };
+const sumarMeses = (f, m) => { const d = new Date(f + "T12:00:00Z"); const dia = d.getUTCDate(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + m);
+  const ult = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate(); d.setUTCDate(Math.min(dia, ult)); return d.toISOString().slice(0, 10); };
+// Cantidad de cuotas de un compromiso con fecha de fin (null si no tiene límite)
+function cuotasDe(k) {
+  const paso = MESES_FREC[k.frecuencia];
+  if (!paso || !k.fecha_fin) return null;
+  let n = 0; for (let f = k.fecha_proxima; f <= k.fecha_fin && n < 600; f = sumarMeses(k.fecha_proxima, paso * ++n));
+  return n || null;
+}
+// Número de cuota de una fecha proyectada
+const cuotaNro = (k, fecha) => { const paso = MESES_FREC[k.frecuencia]; let n = 1;
+  while (n < 600 && sumarMeses(k.fecha_proxima, paso * n) <= fecha) n++; return n; };
 const TIPOS_FIJO = { otro: "Ingreso (sueldo, honorarios, otros)", alquiler: "Alquiler", servicio: "Servicio", seguro: "Seguro", expensas: "Expensas",
                      educacion: "Educación", actividad: "Actividad", suscripcion: "Suscripción", prestamo: "Préstamo", cheque: "Cheque" };
 function editarFijo(k) {
   const nuevo = !k; k = k ?? { descripcion: "", tipo: "otro", monto: 0, moneda: "ARS", frecuencia: "mensual", fecha_proxima: hoyISO(), indexacion: "ninguna" };
+  const cuotasActual = cuotasDe(k);
   const signo = k.monto > 0 || nuevo ? 1 : -1;
   abrirVentana(nuevo ? "Agregar ingreso o gasto fijo" : "Editar " + k.descripcion, `
     <div class="alterna" role="group" aria-label="Tipo"><button type="button" data-signo="1" class="${signo > 0 ? "activo" : ""}">Ingreso</button><button type="button" data-signo="-1" class="${signo < 0 ? "activo" : ""}">Gasto</button></div>
@@ -1418,7 +1433,12 @@ function editarFijo(k) {
       <div><label for="fjMoneda">Moneda</label><select id="fjMoneda"><option value="ARS">Pesos</option><option value="USD" ${k.moneda === "USD" ? "selected" : ""}>Dólares</option></select></div>
       <div><label for="fjFrec">Frecuencia</label><select id="fjFrec">${Object.entries(FRECUENCIAS).map(([v, n]) => `<option value="${v}" ${v === k.frecuencia ? "selected" : ""}>${n}</option>`).join("")}</select></div>
       <div><label for="fjFecha">Próxima fecha</label><input id="fjFecha" type="date" value="${k.fecha_proxima}"></div>
-      <div><label for="fjFin">Hasta (opcional)</label><input id="fjFin" type="date" value="${k.fecha_fin ?? ""}"></div>
+      <div><label for="fjCuotas">Cuotas</label><select id="fjCuotas">
+        <option value="">Sin límite</option>${[3, 6, 12].map((n) => `<option value="${n}" ${cuotasActual === n ? "selected" : ""}>${n} cuotas</option>`).join("")}
+        <option value="otra" ${cuotasActual && ![3, 6, 12].includes(cuotasActual) ? "selected" : ""}>Otra cantidad</option></select></div>
+      <div class="cu-otra"><label for="fjCuotasN">Cantidad de cuotas</label><input id="fjCuotasN" type="text" inputmode="numeric" value="${cuotasActual ?? ""}"></div>
+      <div class="cu-si"><label for="fjModo">El monto es…</label><select id="fjModo"><option value="cuota">Por cuota</option><option value="total">El total (se divide)</option></select></div>
+      <div class="cu-no"><label for="fjFin">Hasta (opcional)</label><input id="fjFin" type="date" value="${k.fecha_fin ?? ""}"></div>
       <div><label for="fjTipo">Clase</label><select id="fjTipo">${Object.entries(TIPOS_FIJO).map(([v, n]) => `<option value="${v}" ${v === k.tipo ? "selected" : ""}>${n}</option>`).join("")}</select></div>
       <div><label for="fjRubro">Rubro</label><select id="fjRubro">${opcionesRubro(k.rubro_id)}</select></div>
       <div><label for="fjCuenta">Cuenta (opcional)</label><select id="fjCuenta">${opciones(ref.cuentas.filter((c) => c.activa), k.cuenta_id, "—")}</select></div>
@@ -1432,17 +1452,31 @@ function editarFijo(k) {
     <p class="tenue">El rubro sirve para el control de pagos: si un mes no aparece un pago de ese rubro por un importe parecido (±15%), o aparece dos veces, te avisa.</p>`);
   const verIpc = () => $("detCuerpo").querySelectorAll(".ipc").forEach((x) => x.classList.toggle("oculto", $("fjIdx").value !== "ipc"));
   $("fjIdx").onchange = verIpc; verIpc();
+  // Cuotas: con cantidad fija se calcula la fecha de fin; "Otra cantidad" pide el número
+  const verCuotas = () => {
+    const c = $("fjCuotas").value, unica = $("fjFrec").value === "unica";
+    $("detCuerpo").querySelectorAll(".cu-otra").forEach((x) => x.classList.toggle("oculto", c !== "otra" || unica));
+    $("detCuerpo").querySelectorAll(".cu-si").forEach((x) => x.classList.toggle("oculto", !c || unica));
+    $("detCuerpo").querySelectorAll(".cu-no").forEach((x) => x.classList.toggle("oculto", !!c && !unica));
+    $("fjCuotas").closest("div").classList.toggle("oculto", unica);
+  };
+  $("fjCuotas").onchange = verCuotas; $("fjFrec").addEventListener("change", verCuotas); verCuotas();
   let sg = signo;
   $("detCuerpo").querySelectorAll("[data-signo]").forEach((b) => b.onclick = () => {
     sg = +b.dataset.signo; $("detCuerpo").querySelectorAll("[data-signo]").forEach((x) => x.classList.toggle("activo", x === b));
     if (sg > 0 && $("fjTipo").value !== "alquiler") $("fjTipo").value = "otro";
   });
   $("fjGuardar").onclick = async () => {
-    const monto = numeroAR($("fjMonto").value), desc = $("fjDesc").value.trim(), fecha = $("fjFecha").value;
+    let monto = numeroAR($("fjMonto").value);
+    const desc = $("fjDesc").value.trim(), fecha = $("fjFecha").value, frec = $("fjFrec").value;
     if (!desc || !monto || !fecha) return ($("fjMsg").textContent = "Completa qué es, el monto y la próxima fecha.");
+    const selC = $("fjCuotas").value, nCuotas = frec === "unica" || !selC ? null : selC === "otra" ? parseInt($("fjCuotasN").value, 10) : +selC;
+    if (selC === "otra" && frec !== "unica" && !(nCuotas >= 1)) return ($("fjMsg").textContent = "Escribe la cantidad de cuotas.");
+    if (nCuotas && $("fjModo").value === "total") monto = Math.round((monto / nCuotas) * 100) / 100;
+    const fin = nCuotas ? sumarMeses(fecha, MESES_FREC[frec] * (nCuotas - 1)) : $("fjFin").value || null;
     const val = (id) => ($(id).value ? +$(id).value : null);
     const datos = { descripcion: desc, tipo: $("fjTipo").value, monto: sg * Math.abs(monto), moneda: $("fjMoneda").value,
-      frecuencia: $("fjFrec").value, fecha_proxima: fecha, fecha_fin: $("fjFin").value || null, indexacion: $("fjIdx").value,
+      frecuencia: frec, fecha_proxima: fecha, fecha_fin: fin, indexacion: $("fjIdx").value,
       rubro_id: val("fjRubro"), cuenta_id: val("fjCuenta"), activo_id: val("fjActivo"), activo: true,
       ajuste_cada: $("fjIdx").value === "ipc" ? Math.min(12, Math.max(1, parseInt($("fjCada").value, 10) || 3)) : null,
       ultimo_ajuste: $("fjIdx").value === "ipc" ? ($("fjUlt").value || hoyISO().slice(0, 7)) + "-01" : null };
