@@ -224,3 +224,22 @@ await run(updAgui);
 console.log("R marcados:", (await db.query("select descripcion, aguinaldo from compromisos order by id")).rows);
 console.log("R aguinaldos próximos 12 meses:", (await db.query(`select descripcion, fecha::text, monto from v_flujo_proyectado
   where aguinaldo order by fecha, descripcion`)).rows);
+
+// M) Anotados a mano: el resumen reemplaza el que coincide, ignora en la conciliación el que no
+// trae y lo deja sugerido; "Ya entró" saca ese vencimiento de lo que viene
+await run(`delete from transferencias_internas; delete from movimientos; delete from saldos; delete from documentos; delete from compromisos;
+  insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima, cuenta_id, aguinaldo) values
+  ('Sueldo T', 'otro', 1000, 'ARS', 'mensual', '2026-12-02', 1, 50);
+  insert into movimientos (cuenta_id, fecha, descripcion_original, monto, moneda, origen, confianza, estado_conciliacion, id_externo) values
+  (1, '2026-11-02', 'Sueldo anotado', 900000, 'ARS', 'manual', 'confirmado', 'no_aplica', 'manual:s1'),
+  (1, '2026-11-05', 'Transferencia anotada que no vino', -5000, 'ARS', 'manual', 'confirmado', 'no_aplica', 'manual:s2');
+  insert into compromisos_registrados (compromiso_id, fecha, aguinaldo, movimiento_id)
+  select id, '2026-12-02', false, (select id from movimientos where id_externo = 'manual:s1') from compromisos;
+  insert into compromisos_registrados (compromiso_id, fecha, aguinaldo) select id, '2026-12-18', true from compromisos;`);
+console.log("M flujo sin lo registrado:", (await db.query(`select fecha::text, descripcion, monto from v_flujo_proyectado
+  where fecha < '2027-02-01' order by fecha`)).rows);
+console.log("M importación:", await guardar({ cuenta_id: 1, documento: doc("resumen_cuenta", "2026-11-01", "2026-11-30", "s1"),
+  conciliar: [{ moneda: "ARS", fecha_inicial: "2026-10-31", saldo_inicial: 100000, fecha_final: "2026-11-30", saldo_final: 1000000 }],
+  movimientos: [{ ...mov("2026-11-03", "Haberes", 900000, "ARS", "r1"), rubro_id: null }] }));
+console.log("M movimientos:", (await db.query(`select descripcion_original, origen, confianza, notas from movimientos order by id`)).rows,
+  "| registro:", (await db.query(`select fecha::text, aguinaldo, movimiento_id from compromisos_registrados order by id`)).rows);

@@ -1015,7 +1015,8 @@ async function verHoy() {
 
     $("hoy-c").innerHTML = `
       <div class="barra-filtros"><button class="sec" id="btnSaldos" type="button">Actualizar saldos</button>
-        <span class="tenue">Carga el saldo de hoy de cada cuenta desde su home banking</span>
+        <button class="sec" id="btnAnotar" type="button">Anotar movimiento</button>
+        <span class="tenue">Saldos de hoy desde el home banking, o un ingreso o gasto sin esperar el resumen</span>
         <button class="sec" id="btnAlertas" type="button" style="margin-left:auto">Configurar alertas</button></div>
       <div id="formSaldos"></div>
       ${alertas.length ? `<div class="msg info"><strong>Alertas (${alertas.length})</strong>
@@ -1045,6 +1046,7 @@ async function verHoy() {
       datasets: [{ data: enPesos.map((x) => Math.round(x.v)), backgroundColor: paleta(enPesos.length), borderColor: css("--papel"), borderWidth: 2 }] },
       options: opcionesDona(pesos) });
     $("btnSaldos").onclick = () => formularioSaldos(ss, tar);
+    $("btnAnotar").onclick = () => anotarMovimiento({ alGuardar: (aviso) => verHoy().then(() => $("hoy-c").insertAdjacentHTML("afterbegin", `<div class="msg ok">${aviso}</div>`)) });
     $("btnAlertas").onclick = configurarAlertas;
   } catch (e) { $("hoy-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
 }
@@ -1275,6 +1277,68 @@ async function detalleGastos(lineas) {
   });
 }
 
+// ---------------- ANOTAR UN MOVIMIENTO A MANO ----------------
+// Ventana para anotar un ingreso o gasto en cualquier cuenta sin esperar el resumen (origen manual,
+// id_externo "manual:…"). Cuando se importa el resumen que lo trae, guardar_importacion lo reemplaza.
+// op: { cuenta_id, signo, monto, moneda, fecha, descripcion, rubro_id, activo_id, titulo,
+//       registro: { compromiso_id, fecha, aguinaldo } (marca ese vencimiento como registrado), alGuardar }
+function anotarMovimiento(op = {}) {
+  const cuentas = ref.cuentas.filter((c) => c.activa);
+  const personas = ref.personas.filter((x) => x.tipo !== "empresa");
+  let sg = op.signo ?? -1;
+  abrirVentana(op.titulo ?? "Anotar un movimiento", `
+    <div class="alterna" role="group" aria-label="Tipo"><button type="button" data-sg="-1" class="${sg < 0 ? "activo" : ""}">Gasto o pago</button><button type="button" data-sg="1" class="${sg > 0 ? "activo" : ""}">Ingreso</button></div>
+    <div class="form-grid">
+      <div><label for="amCuenta">Cuenta</label><select id="amCuenta">${opciones(cuentas, op.cuenta_id ?? null, "Elegir cuenta")}</select></div>
+      <div><label for="amMonto">Monto</label><input id="amMonto" type="text" inputmode="decimal" autocomplete="off" value="${op.monto ? fmt.format(Math.abs(op.monto)) : ""}"></div>
+      <div class="am-mon"><label for="amMoneda">Moneda</label><select id="amMoneda"><option value="ARS">Pesos</option><option value="USD" ${op.moneda === "USD" ? "selected" : ""}>Dólares</option></select></div>
+      <div><label for="amFecha">Fecha</label><input id="amFecha" type="date" value="${op.fecha ?? hoyISO()}"></div>
+      <div style="grid-column:1/-1"><label for="amDesc">Qué fue</label><input id="amDesc" type="text" value="${esc(op.descripcion ?? "")}" placeholder="Sueldo, transferencia de…, pago de…"></div>
+      <div><label for="amRubro">Rubro</label><select id="amRubro">${opcionesRubro(op.rubro_id ?? null)}</select></div>
+      <div><label for="amQuien">Quién</label><select id="amQuien">${opciones(personas.filter((x) => x.tipo !== "grupo"), ref.personas.find((x) => x.tipo === "titular")?.id, "—")}</select></div>
+      <div><label for="amPara">Para quién</label><select id="amPara">${opciones(personas, null, "—")}</select></div>
+      <div><label for="amActivo">Bien</label><select id="amActivo">${opciones(ref.activos, op.activo_id ?? null, "—")}</select></div>
+      <div class="acciones"><button id="amGuardar" type="button">Anotar</button><span id="amMsg" class="tenue"></span></div>
+    </div>
+    <p class="tenue">Queda como anotado a mano. Cuando importes el resumen de esa cuenta, si trae un movimiento del mismo importe con fecha a 5 días o menos, lo reemplaza; si no lo trae, queda en Pendientes para revisar.</p>`);
+  // La moneda se elige solo en cuentas bimoneda
+  const verMoneda = () => {
+    const c = cuentaDe(+$("amCuenta").value);
+    if (c && c.moneda !== "BIMONEDA") $("amMoneda").value = c.moneda;
+    $("detCuerpo").querySelector(".am-mon").classList.toggle("oculto", !!c && c.moneda !== "BIMONEDA");
+  };
+  $("amCuenta").onchange = verMoneda; verMoneda();
+  $("detCuerpo").querySelectorAll("[data-sg]").forEach((b) => b.onclick = () => {
+    sg = +b.dataset.sg; $("detCuerpo").querySelectorAll("[data-sg]").forEach((x) => x.classList.toggle("activo", x === b));
+  });
+  $("amGuardar").onclick = async () => {
+    const n = numeroAR($("amMonto").value), c = cuentaDe(+$("amCuenta").value), fecha = $("amFecha").value || hoyISO();
+    if (!c) return ($("amMsg").textContent = "Elige la cuenta.");
+    if (!n) return ($("amMsg").textContent = "Escribe el monto.");
+    if (!$("amRubro").value) return ($("amMsg").textContent = "Elige un rubro.");
+    const val = (id) => ($(id).value ? +$(id).value : null), moneda = $("amMoneda").value;
+    $("amGuardar").disabled = true;
+    const { data, error } = await sb.from("movimientos").insert({
+      cuenta_id: c.id, fecha, moneda, monto: sg * Math.abs(n), tipo_cambio: moneda === "USD" ? tc?.valor ?? null : null,
+      descripcion_original: $("amDesc").value.trim() || (sg < 0 ? "Gasto anotado" : "Ingreso anotado"),
+      rubro_id: val("amRubro"), persona_id: val("amQuien"), beneficiario_id: val("amPara"), activo_id: val("amActivo"),
+      origen: "manual", confianza: "confirmado", estado_conciliacion: "no_aplica", id_externo: "manual:" + crypto.randomUUID(),
+    }).select("id").single();
+    if (error) { $("amGuardar").disabled = false; return ($("amMsg").innerHTML = `<span class="menos">No se pudo anotar: ${esc(error.message)}</span>`); }
+    if (op.registro) {
+      const { error: e2 } = await sb.from("compromisos_registrados").insert({ ...op.registro, movimiento_id: data.id });
+      if (e2) { $("amGuardar").disabled = false; return ($("amMsg").innerHTML = `<span class="menos">Se anotó el movimiento, pero no se pudo sacar de lo que viene: ${esc(e2.message)}</span>`); }
+    }
+    // El saldo parte del último saldo conocido: lo anotado con fecha anterior o igual no lo cambia
+    const { data: sv } = await sb.from("v_saldo_vivo").select("confirmado_al").eq("cuenta_id", c.id).eq("moneda", moneda);
+    const base = sv?.[0]?.confirmado_al;
+    $("detalle").close();
+    const aviso = `${sg < 0 ? "Gasto" : "Ingreso"} de ${conMoneda(Math.abs(n), moneda)} del ${dm(fecha)} anotado en ${esc(c.alias)}.${base && fecha <= base
+      ? ` Es anterior o igual al último saldo conocido (${dm(base)}), así que no cambia el saldo de la cuenta; sí cuenta en El mes.` : ""}`;
+    await op.alGuardar?.(aviso);
+  };
+}
+
 // ---------------- LO QUE VIENE ----------------
 // Horizonte de Lo que viene (se recuerda en este navegador)
 let horizonte = (() => { try { return +localStorage.getItem("horizonte") || 60; } catch { return 60; } })();
@@ -1295,7 +1359,7 @@ async function verViene() {
       sb.from("movimientos").select("cuenta_id, fecha, descripcion_original, monto, moneda, cuota_nro, cuotas_total")
         .not("cuotas_total", "is", null).gte("fecha", sumarDias(hoy, -75)).lt("monto", 0),
       sb.from("compromisos").select("*").eq("activo", true).neq("tipo", "vencimiento_tarjeta").order("fecha_proxima"),
-      sb.from("compromisos").select("id, cuenta_id").eq("activo", true),
+      sb.from("compromisos").select("id, cuenta_id, rubro_id, activo_id").eq("activo", true),
     ]);
     if (fl.error) throw fl.error;
     if (fq.error) throw fq.error;
@@ -1355,12 +1419,13 @@ async function verViene() {
         ${pc.sinCuenta.length ? `<p class="tenue">Sin cuenta asignada: ${pc.sinCuenta.map((f) => `${esc(f.descripcion)} (${dm(f.fecha)}, ${pesos(f.monto)})`).join(", ")}. No entran en esta tabla ni en las transferencias sugeridas: asígnales una cuenta con "Editar" en Ingresos y gastos fijos.</p>` : ""}
         <p class="tenue">Cada compromiso se imputa a su cuenta; los vencimientos de tarjeta, a la cuenta en pesos del mismo banco y titular. Las transferencias sugeridas toman de las cuentas a las que les sobra plata ese día sin que queden en rojo después. El punto más bajo de cada cuenta no incluye esas transferencias.</p></div>
       <div class="panel"><h3>Próximos vencimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
-        ${filas.map((f) => { const kk = !f.aguinaldo && fijos.find((x) => x.id === f.compromiso_id), nc = kk && cuotasDe(kk);
+        ${filas.map((f, i) => { const kk = !f.aguinaldo && fijos.find((x) => x.id === f.compromiso_id), nc = kk && cuotasDe(kk);
           return `<tr><td>${dm(f.fecha)}</td><td>${esc(f.descripcion)}${nc ? ` <span class="chip">cuota ${cuotaNro(kk, f.fecha)} de ${nc}</span>` : ""}${f.indexacion !== "ninguna" ? ` <span class="tenue">(${f.indexacion === "uva" ? "ajusta por UVA" : f.indexacion === "ipc" ? "ajustado por IPC, estimado" : "estimado"})</span>` : ""}</td>
-          <td class="num ${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</td><td class="num tenue">${pesos(f.saldo)}</td></tr>`; }).join("") ||
+          <td class="num ${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</td><td class="num tenue">${pesos(f.saldo)}</td>
+          <td>${f.tipo === "vencimiento_tarjeta" ? "" : `<button class="link" data-registrar="${i}" type="button">${f.monto > 0 ? "Ya entró" : "Ya lo pagué"}</button>`}</td></tr>`; }).join("") ||
           `<tr><td class="tenue">No hay compromisos cargados en ${hz === "1 semana" ? "la próxima semana" : `los próximos ${hz}`}.</td></tr>`}
       </tbody></table></div>
-      <p class="tenue">Incluye hipoteca, alquiler, seguros y expensas cargados como compromisos, el vencimiento de cada resumen de tarjeta importado y las cuotas que quedan de cada compra en cuotas (estimado: los consumos nuevos se suman cuando cierra cada resumen).</p></div>
+      <p class="tenue">Incluye hipoteca, alquiler, seguros y expensas cargados como compromisos, el vencimiento de cada resumen de tarjeta importado y las cuotas que quedan de cada compra en cuotas (estimado: los consumos nuevos se suman cuando cierra cada resumen). Con «Ya entró» o «Ya lo pagué» lo anotas en su cuenta sin esperar el resumen y sale de esta lista.</p></div>
       <div class="panel" id="pFijos"><h3>Ingresos y gastos fijos</h3>
         <p class="tenue" style="margin-top:0">Sueldos, alquileres que cobras o pagas, colegio, seguros, servicios… Lo que cargues acá entra en el saldo proyectado, en las alertas de vencimiento y en el control de pagos duplicados o faltantes. Los vencimientos de tarjeta los agenda solo cada resumen.</p>
         <table class="mini"><tbody>
@@ -1379,6 +1444,17 @@ async function verViene() {
       </tbody></table></div>`;
 
     $("btnFijo").onclick = () => editarFijo(null);
+    // "Ya entró" / "Ya lo pagué": anota el movimiento y saca ese vencimiento de lo que viene
+    const datosK = Object.fromEntries(kq.data.map((k) => [k.id, k]));
+    $("viene-c").querySelectorAll("[data-registrar]").forEach((b) => b.onclick = () => {
+      const f = filas[+b.dataset.registrar], k = datosK[f.compromiso_id] ?? {};
+      let c = cuentaDe(k.cuenta_id);
+      if (c?.tipo === "tarjeta_credito") c = cuentaPagadora(c);
+      anotarMovimiento({ titulo: `${f.monto > 0 ? "Ya entró" : "Ya lo pagué"}: ${f.descripcion}`, signo: f.monto > 0 ? 1 : -1,
+        monto: f.monto, moneda: f.moneda, descripcion: f.descripcion, cuenta_id: c?.id, rubro_id: k.rubro_id, activo_id: k.activo_id,
+        registro: { compromiso_id: f.compromiso_id, fecha: f.fecha, aguinaldo: !!f.aguinaldo },
+        alGuardar: (aviso) => verViene().then(() => $("viene-c").insertAdjacentHTML("afterbegin", `<div class="msg ok">${aviso} Ya no figura en lo que viene.</div>`)) });
+    });
     $("viene-c").querySelectorAll("[data-editar-fijo]").forEach((b) => b.onclick = () => editarFijo(fijos.find((k) => k.id === +b.dataset.editarFijo)));
     // Flujo por día (hasta 2 meses) o por semana (3 y 6 meses): barras de ingresos y egresos + línea de saldo
     const paso = horizonte > 60 ? 7 : 1;
