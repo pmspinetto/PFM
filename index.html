@@ -883,7 +883,7 @@ const COMO = {
     <li>Los que ajustan por IPC (por ejemplo, un alquiler trimestral) se multiplican en cada mes de ajuste por la inflación de los meses que terminan dos meses antes; los meses no publicados se estiman con el promedio de los últimos tres.</li>
     <li>Los que ajustan por UVA se proyectan con el importe cargado, sin indexar.</li></ul>`,
   ingresosEsp: `<p><code>Ingresos esperados = Σ importe</code> de los compromisos positivos en pesos dentro del horizonte elegido (por ejemplo, sueldos, alquileres a cobrar o el vencimiento de un plazo fijo). Los que ajustan por IPC ya incluyen el ajuste que corresponda a cada mes. Los sueldos con aguinaldo suman, además, el porcentaje elegido del sueldo el 30/06 y el 18/12 (estimado).</p>`,
-  minimo: `<p>El saldo proyectado arranca en el disponible de hoy y, en orden de fecha, suma o resta cada compromiso: <code>saldo después = saldo anterior + importe del compromiso</code>.</p><p><code>Saldo más bajo = mínimo de esa serie</code>, incluido el saldo de hoy. Si es negativo, antes de esa fecha vas a necesitar fondos.</p>`,
+  minimo: `<p>El saldo proyectado arranca en el disponible de hoy y, en orden de fecha, suma o resta cada compromiso: <code>saldo después = saldo anterior + importe del compromiso</code>.</p><p><code>Saldo más bajo = mínimo del saldo al cierre de cada día</code> (lo que entra y sale el mismo día se compensa), incluido el saldo de hoy. Si es negativo, antes de esa fecha vas a necesitar fondos. La alerta de liquidez de Hoy usa este mismo cálculo para los próximos 7 días.</p>`,
   patNeto: `<p><code>Patrimonio neto = liquidez + bienes e inversiones − deudas</code>, todo en dólares al último MEP.</p><p>Los préstamos restan su saldo de capital; las tarjetas, su deuda neta (solo se descuentan los pagos que ya figuran en una cuenta).</p>`,
   liquidez: `<p><code>Liquidez = Σ saldo de las cuentas que no son tarjetas</code>, pasadas a dólares: <code>pesos ÷ MEP</code>; las cuentas en dólares, tal cual.</p>${SALDO_CUENTA}`,
   bienes: `<p><code>Bienes e inversiones = Σ valor de cada bien</code>, en dólares.</p><ul>
@@ -1056,7 +1056,7 @@ async function configurarAlertas() {
   const { data: c, error } = await sb.from("config_alertas").select("*").eq("id", 1).single();
   if (error) return alert(error.message);
   $("formSaldos").innerHTML = `<div class="panel"><h3>Alertas</h3>
-    <p class="tenue" style="margin-top:0">Avisan de gastos grandes, vencimientos cercanos, liquidez que no alcanza para los próximos 7 días y pagos mensuales duplicados o faltantes del mes anterior (cuando ya importaste un resumen que lo cubre). Se ven acá y llegan por mail una sola vez.</p>
+    <p class="tenue" style="margin-top:0">Avisan de gastos grandes, vencimientos cercanos, saldo proyectado en rojo en los próximos 7 días (contando los ingresos esperados) y pagos mensuales duplicados o faltantes del mes anterior (cuando ya importaste un resumen que lo cubre). Se ven acá y llegan por mail una sola vez.</p>
     <div class="form-grid">
       <div><label for="alGasto">Gasto grande desde ($)</label><input id="alGasto" type="text" inputmode="decimal" value="${fmt0.format(c.gasto_grande)}"></div>
       <div><label for="alDias">Avisar vencimientos con días de anticipación</label><input id="alDias" type="text" inputmode="numeric" value="${c.dias_vencimiento}"></div>
@@ -1383,8 +1383,11 @@ async function verViene() {
     const filas = fl.data.filter((c) => c.moneda === "ARS").map((c) => { saldo += Number(c.monto); return { ...c, saldo }; });
     const egresos = filas.filter((f) => f.monto < 0).reduce((a, f) => a - Number(f.monto), 0);
     const ingresos = filas.filter((f) => f.monto > 0).reduce((a, f) => a + Number(f.monto), 0);
-    const minimo = filas.reduce((m, f) => Math.min(m, f.saldo), inicial);
-    const fMin = filas.find((f) => f.saldo === minimo)?.fecha ?? null;
+    // Saldo más bajo al cierre de cada día (lo que entra y sale el mismo día se compensa), igual que el gráfico y la alerta de Hoy
+    const netoDia = {};
+    filas.forEach((f) => { netoDia[f.fecha] = (netoDia[f.fecha] ?? 0) + Number(f.monto); });
+    let minimo = inicial, fMin = null, acDia = inicial;
+    Object.keys(netoDia).sort().forEach((d) => { acDia += netoDia[d]; if (acDia < minimo) { minimo = acDia; fMin = d; } });
     const disp = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito" && s.moneda === "ARS").sort((a, b) => b.saldo_estimado - a.saldo_estimado);
     const detDisp = tablaDetalle(disp.map((s) => [esc(s.alias), pesos(s.saldo_estimado)]), ["Total", pesos(inicial)]);
     const detFlujo = (cond, vacio) => { const xs = filas.filter(cond);

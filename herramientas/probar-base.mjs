@@ -243,3 +243,13 @@ console.log("M importación:", await guardar({ cuenta_id: 1, documento: doc("res
   movimientos: [{ ...mov("2026-11-03", "Haberes", 900000, "ARS", "r1"), rubro_id: null }] }));
 console.log("M movimientos:", (await db.query(`select descripcion_original, origen, confianza, notas from movimientos order by id`)).rows,
   "| registro:", (await db.query(`select fecha::text, aguinaldo, movimiento_id from compromisos_registrados order by id`)).rows);
+
+// L) Alerta de liquidez: cuenta los ingresos esperados y avisa solo si el saldo proyectado queda en rojo
+await run(`delete from compromisos; delete from saldos; delete from movimientos; delete from transferencias_internas;
+  insert into saldos (cuenta_id, fecha, moneda, saldo, fuente) values (1, current_date, 'ARS', 1000, 'informado');
+  insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima) values
+  ('Egreso grande', 'otro', -3000, 'ARS', 'unica', current_date + 3), ('Sueldo', 'otro', 5000, 'ARS', 'unica', current_date + 2);`);
+const liq = async () => (await db.query(`select fecha::text, detalle, monto from alertas_calcular() where tipo = 'saldo_insuficiente'`)).rows;
+console.log("L con el sueldo antes (no avisa):", await liq());
+await run(`update compromisos set fecha_proxima = current_date + 5 where descripcion = 'Sueldo';`);
+console.log("L con el sueldo después (avisa):", await liq());
