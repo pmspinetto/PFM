@@ -163,7 +163,7 @@ await run(`delete from transferencias_internas; delete from movimientos; delete 
   insert into movimientos (cuenta_id, fecha, descripcion_original, monto, moneda, origen) values
     (2, current_date, 'TELEVISOR', -450000, 'ARS', 'mail'), (2, current_date, 'CAFE', -3000, 'ARS', 'mail'),
     (2, current_date, 'PASAJE EN DOLARES', -250, 'USD', 'mail');
-  insert into rubros (nombre, padre_id, tipo) select 'Colegio', id, 'gasto' from rubros where nombre = 'Varios';
+  insert into rubros (nombre, padre_id, tipo) select 'Colegio', id, 'gasto' from rubros where nombre = 'Varios' on conflict do nothing;
   insert into compromisos (descripcion, tipo, rubro_id, monto, moneda, frecuencia, fecha_proxima) values
     ('Cuota colegio', 'educacion', (select id from rubros where nombre = 'Colegio'), -200000, 'ARS', 'mensual', date_trunc('month', current_date - interval '2 month')::date + 9),
     ('Seguro', 'seguro', null, -50000, 'ARS', 'unica', current_date + 2);
@@ -253,3 +253,32 @@ const liq = async () => (await db.query(`select fecha::text, detalle, monto from
 console.log("L con el sueldo antes (no avisa):", await liq());
 await run(`update compromisos set fecha_proxima = current_date + 5 where descripcion = 'Sueldo';`);
 console.log("L con el sueldo después (avisa):", await liq());
+
+// X) Avisos: nada se descarta, transferencias, duplicados por comprobante, interna y vínculo con compromisos
+await run(`delete from compromisos_registrados; delete from compromisos; delete from transferencias_internas; delete from movimientos;
+  delete from avisos; delete from saldos; delete from documentos;
+  update cuentas set numero = '000-123456/7', cbu_cvu = '0720000000000001234567' where id = 1;
+  update cuentas set cbu_cvu = '0000003100000000000099' where id = 4;
+  insert into rubros (nombre, padre_id, tipo) select 'Colegio', id, 'gasto' from rubros where nombre = 'Varios' on conflict do nothing;
+  insert into reglas (prioridad, patron, modo, rubro_id) select 40, '%COLEGIO%', 'auto', min(id) from rubros where nombre = 'Colegio';
+  insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima) values ('Cuota matrícula', 'educacion', -500000, 'ARS', 'unica', current_date);`);
+const aviso = async (p) => (await db.query("select registrar_aviso($1::jsonb) as r", [JSON.stringify(p)])).rows[0].r;
+const tr = (extra) => ({ banco: "Banco", tipo: "transferencia_enviada", monto: -500000, moneda: "ARS", fecha: new Date().toISOString().slice(0, 10),
+  cuenta: "123456/7", descripcion: "Transferencia a COLEGIO EJEMPLO", destinatario: "COLEGIO EJEMPLO", cbu: "0110000000000000000011", comprobante: "000111222", ...extra });
+console.log("X no reconocido:", await aviso({ message_id: "m0", remitente: "banco", asunto: "Promo", estado: "no_reconocido", datos: { extracto: "..." } }));
+console.log("X error y luego reconocido:", await aviso({ message_id: "m1", asunto: "Transferencia", estado: "error", datos: { error: "falló" } }),
+  await aviso({ message_id: "m1", remitente: "banco", asunto: "Transferencia", recibido: new Date().toISOString(), aviso: tr({}) }));
+console.log("X copia reenviada a mano:", await aviso({ message_id: "m2", remitente: "yo", asunto: "RV: Transferencia", recibido: new Date().toISOString(), aviso: tr({}) }));
+console.log("X interna:", await aviso({ message_id: "m3", asunto: "Transferencia", recibido: new Date().toISOString(),
+  aviso: tr({ monto: -1000, comprobante: "999", cbu: "0000003100000000000099", descripcion: "Transferencia a mí" }) }));
+console.log("X avisos:", (await db.query("select message_id, estado, movimiento_id is not null as mov from avisos order by message_id")).rows);
+console.log("X movimientos:", (await db.query(`select m.descripcion_original, m.monto, m.id_externo, r.nombre as rubro, m.notas,
+  exists (select 1 from transferencias_internas t where t.mov_salida_id = m.id) as en_transito from movimientos m left join rubros r on r.id = m.rubro_id order by m.id`)).rows);
+console.log("X flujo sin la matrícula:", (await db.query("select count(*)::int as n from v_flujo_proyectado")).rows[0].n,
+  "| registrados:", (await db.query("select count(*)::int as n from compromisos_registrados where movimiento_id is not null")).rows[0].n);
+console.log("X resumen que lo trae:", await guardar({ cuenta_id: 1, documento: doc("resumen_cuenta", "2026-10-01", "2026-12-31", "x1"),
+  conciliar: [{ moneda: "ARS", fecha_inicial: "2026-09-30", saldo_inicial: 1000000, fecha_final: "2026-12-31", saldo_final: 500000 }],
+  movimientos: [{ ...mov(new Date().toISOString().slice(0, 10), "TRANSF COLEGIO", -500000, "ARS", "rx1"), rubro_id: null }] }));
+console.log("X después del resumen:", (await db.query("select origen, count(*)::int from movimientos group by 1 order by 1")).rows,
+  (await db.query("select estado, count(*)::int from avisos group by 1 order by 1")).rows,
+  "| registro sigue:", (await db.query("select count(*)::int as n from compromisos_registrados")).rows[0].n);
