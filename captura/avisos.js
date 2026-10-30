@@ -87,20 +87,24 @@ var Avisos = (function () {
   }
 
   // ---------- Santander ----------
-  // Consumo con tarjeta ("Pagaste $…", "Tu adicional hizo un consumo"): el cuerpo dice
-  // "detalle de(l) (tu) consumo … con (la|su|tu) Tarjeta … terminada en NNNN" y sigue
-  // con pares etiqueta-valor (Monto, Cuotas, Comercio, Fecha, Hora)
+  // Consumo con tarjeta ("Pagaste $…", "Tu adicional hizo un consumo") y débito automático a la
+  // tarjeta ("Aviso de débito automático", "Débito automático de tu adicional"): el cuerpo dice
+  // "detalle de(l) (tu) consumo|débito … con (la|su|tu) Tarjeta … terminada en NNNN" y sigue
+  // con pares etiqueta-valor (Monto, Cuotas, Comercio, Fecha, Hora). El débito del adicional
+  // termina con "terminada en NNNN de <titular>."
   function santander(t, asunto, recibido) {
     var tarjeta = t.match(/con (?:la|su|tu)\s+(?:Tarjeta\s+)?(.+?)\s+terminada en\s+(\d{4})/i);
-    if (/detalle de(?:l| tu) consumo/i.test(t) && tarjeta) {
+    var debito = /detalle del d[eé]bito/i.test(t);
+    if ((/detalle de(?:l| tu) consumo/i.test(t) || debito) && tarjeta) {
       var imp = importe(campo(t, "Monto") || "");
       if (!imp) return null;
-      var titular = (t.match(/consumo que hizo\s+(.+?)\s+con su/i) || [])[1] || null;
+      var titular = (t.match(/consumo que hizo\s+(.+?)\s+con su/i) || t.match(/terminada en\s+\d{4}\s+de\s+([^.\n]+)\./i) || [])[1] || null;
       var cuotas = Number(campo(t, "Cuotas")) || 1;
       return { banco: "Santander", tipo: "consumo_tarjeta", monto: -imp.valor, moneda: imp.moneda,
                fecha: fechaISO(campo(t, "Fecha")) || fechaLocal(recibido), hora: campo(t, "Hora"),
                descripcion: campo(t, "Comercio") || "Consumo", ultimos4: tarjeta[2], cuenta: null,
-               cuotas: cuotas, titular: titular, tarjeta: tarjeta[1].replace(/^Santander\s+/i, "") };
+               cuotas: cuotas, titular: titular, tarjeta: tarjeta[1].replace(/^Santander\s+/i, ""),
+               debito_automatico: debito || undefined };
     }
     // Transferencia enviada ("Aviso de transferencia"): pares etiqueta-valor Destinatario,
     // Cuenta de origen ("Cuenta en Pesos XXX-XXX 1234"), CBU de Destino, Importe y Número de
