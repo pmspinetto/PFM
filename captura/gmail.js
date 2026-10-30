@@ -5,8 +5,12 @@
 // los lee y los registra en Supabase con el usuario de captura (que solo puede
 // registrar avisos). Gmail agrupa avisos con el mismo asunto en una conversación,
 // así que se procesa mail por mail desde el último visto (propiedad ULTIMO); si
-// alguno se repite, Supabase lo ignora (message_id único). Las etiquetas son solo
-// informativas: fo/registrado · fo/sospechoso (no pasó la verificación) · fo/error
+// alguno se repite, Supabase lo ignora (message_id único). Ningún mail leído se descarta:
+// los que no son avisos conocidos quedan en Supabase como no_reconocido (asunto, remitente y
+// un extracto), los que no pasan la verificación como sospechoso y los que fallan como error.
+// También lee los avisos reenviados a mano desde una casilla de REDIRECTORES (toma el banco
+// del encabezado del reenvío y exige que Gmail haya verificado esa casilla).
+// Las etiquetas son solo informativas: fo/registrado · fo/sospechoso · fo/error · fo/no_reconocido
 //
 // Propiedades del script (Configuración del proyecto → Propiedades del script):
 //   SUPABASE_URL, SUPABASE_ANON_KEY, CAPTURA_EMAIL, CAPTURA_CLAVE
@@ -22,7 +26,7 @@
 // Los resúmenes que llegan con el PDF adjunto se suben a la carpeta privada "bandeja" de
 // Supabase y quedan en la bandeja de Importar (etiqueta fo/bandeja).
 
-var ETIQUETAS = ["fo/registrado", "fo/sospechoso", "fo/error", "fo/bandeja"];
+var ETIQUETAS = ["fo/registrado", "fo/sospechoso", "fo/error", "fo/bandeja", "fo/no_reconocido"];
 
 function procesarAvisos() {
   var props = PropertiesService.getScriptProperties();
@@ -37,9 +41,14 @@ function procesarAvisos() {
   var ultimo = cfg.ULTIMO ? new Date(cfg.ULTIMO) : new Date(Date.now() - 30 * 86400000);
   var desdeFecha = new Date(ultimo.getTime() - 3600000);
   var dias = Math.max(1, Math.ceil((Date.now() - desdeFecha.getTime()) / 86400000));
-  var remitentes = Avisos.DOMINIOS.map(function (d) { return "from:" + d; }).join(" OR ");
+  var redirectores = (cfg.REDIRECTORES || "").split(",").map(function (x) { return x.trim().toLowerCase(); }).filter(String);
+  var remitentes = Avisos.DOMINIOS.map(function (d) { return "from:" + d; })
+    // Reenviados a mano: de una casilla propia y que mencionan el dominio de un banco
+    .concat(redirectores.map(function (r) { return "(from:" + r + " (" + Avisos.DOMINIOS.join(" OR ") + "))"; }))
+    .join(" OR ");
   // in:anywhere incluye Spam (los avisos redirigidos desde Hotmail a veces caen ahí); se excluye la papelera
   var hilos = GmailApp.search("in:anywhere -in:trash (" + remitentes + ") newer_than:" + dias + "d", 0, 100);
+  var verificar = { redirectores: redirectores, reenvioManual: true };
 
   var token = null, nuevoUltimo = ultimo, primerError = null, revisados = 0, avisos = 0;
   hilos.forEach(function (hilo) {
@@ -53,9 +62,11 @@ function procesarAvisos() {
           return a.getContentType() === "application/pdf" || /\.pdf$/i.test(a.getName());
         });
         if (pdfs.length) {
-          if (!Avisos.autentico(msg.getRawContent(), { redirectores: (cfg.REDIRECTORES || "").split(",") })) {
+          if (!Avisos.autentico(msg.getRawContent(), verificar)) {
             etiqueta = "fo/sospechoso";
             console.warn("Adjunto de un remitente que no pasó la verificación: " + msg.getSubject());
+            token = token || ingresar(cfg);
+            guardarSinLeer(cfg, token, msg, "sospechoso", { motivo: "Adjunto que no pasó la verificación" });
             return;
           }
           token = token || ingresar(cfg);
@@ -64,11 +75,18 @@ function procesarAvisos() {
           return;
         }
         var aviso = Avisos.leer({ de: msg.getFrom(), asunto: msg.getSubject(), html: msg.getBody(), recibido: msg.getDate() });
-        if (!aviso) return;                       // publicidad u otro mail del banco
+        if (!aviso) {                             // publicidad u otro mail que ningún lector entiende
+          token = token || ingresar(cfg);
+          guardarSinLeer(cfg, token, msg, "no_reconocido", {});
+          etiqueta = "fo/no_reconocido";
+          return;
+        }
         avisos++;
-        if (!Avisos.autentico(msg.getRawContent(), { redirectores: (cfg.REDIRECTORES || "").split(",") })) {
+        if (!Avisos.autentico(msg.getRawContent(), verificar)) {
           etiqueta = "fo/sospechoso";
           console.warn("No pasó la verificación: " + msg.getSubject() + " (" + msg.getFrom() + ")");
+          token = token || ingresar(cfg);
+          guardarSinLeer(cfg, token, msg, "sospechoso", { aviso: aviso });
           return;
         }
         token = token || ingresar(cfg);
@@ -80,8 +98,16 @@ function procesarAvisos() {
         console.log(msg.getSubject() + " → " + JSON.stringify(r));
       } catch (e) {
         etiqueta = "fo/error";
-        if (!primerError || msg.getDate() < primerError) primerError = msg.getDate();
         console.error(msg.getSubject() + ": " + e.message);
+        // Queda registrado con el error; si ni eso se pudo (por ejemplo, Supabase no responde),
+        // la próxima vez se vuelve a intentar desde este mail
+        try {
+          token = token || ingresar(cfg);
+          guardarSinLeer(cfg, token, msg, "error", { error: String(e.message).slice(0, 1000) });
+        } catch (e2) {
+          if (!primerError || msg.getDate() < primerError) primerError = msg.getDate();
+          console.error("No se pudo registrar el error: " + e2.message);
+        }
       } finally {
         if (etiqueta) hilo.addLabel(etiquetas[etiqueta]);
       }
@@ -101,6 +127,27 @@ function procesarAvisos() {
   }
   // Si algo falló, la próxima vez se vuelve a intentar desde ese mail
   props.setProperty("ULTIMO", (primerError ? new Date(primerError.getTime() - 1000) : nuevoUltimo).toISOString());
+}
+
+// Guarda en Supabase un mail que no se pudo convertir en movimiento (no reconocido, sospechoso
+// o con error), con el asunto, el remitente y un extracto del cuerpo
+function guardarSinLeer(cfg, token, msg, estado, extra) {
+  var texto = "";
+  try { texto = Avisos.textoPlano(msg.getBody()).slice(0, 1500); } catch (e) {}
+  var datos = { asunto: msg.getSubject(), remitente: msg.getFrom(), extracto: texto };
+  Object.keys(extra || {}).forEach(function (k) { datos[k] = extra[k]; });
+  var r = llamar(cfg, token, "rpc/registrar_aviso", {
+    p: { message_id: msg.getId(), remitente: msg.getFrom(), asunto: msg.getSubject(), recibido: msg.getDate().toISOString(),
+         banco: Avisos.bancoDe(Avisos.dominioDe(msg.getFrom())), estado: estado, datos: datos },
+  });
+  console.log(msg.getSubject() + " → " + estado + " " + JSON.stringify(r));
+}
+
+// Ejecutar a mano para volver a leer los mails desde una fecha (los ya registrados se ignoran).
+// Cambia la fecha de abajo antes de ejecutar.
+function reprocesarDesde() {
+  PropertiesService.getScriptProperties().setProperty("ULTIMO", new Date("2026-10-30T00:00:00Z").toISOString());
+  procesarAvisos();
 }
 
 // Una vez por día, desde las 18 h de Argentina (o cuando se fuerza): cotizaciones del día.

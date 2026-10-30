@@ -7,7 +7,9 @@
 // Avisos.leer({ de, asunto, html, recibido }) devuelve null si el mail no es
 // un aviso de movimiento conocido, o:
 // { banco, tipo, monto, moneda, fecha, hora, descripcion, ultimos4, cuenta,
-//   cuotas, titular }
+//   cuotas, titular, destinatario, cbu, comprobante, reenviado }
+// Si el mail lo reenvió a mano una casilla propia, el banco sale del encabezado del
+// reenvío que queda en el cuerpo ("De: … <…@santander.com.ar>").
 // tipo: consumo_tarjeta | transferencia_enviada | transferencia_recibida
 // Signos como en movimientos: positivo entra, negativo sale.
 //
@@ -59,6 +61,12 @@ var Avisos = (function () {
     return x.toISOString().slice(0, 10);
   }
 
+  // Texto entre dos etiquetas (valores que ocupan varias líneas)
+  function entre(texto, desde, hasta) {
+    var m = texto.match(new RegExp("(?:^|\\n)\\s*" + desde + "\\s*\\n([\\s\\S]*?)\\n\\s*" + hasta + "\\s*(?:\\n|$)", "i"));
+    return m ? m[1].replace(/\s+/g, " ").trim() : null;
+  }
+
   // Valor que sigue a una etiqueta en el texto ("Comercio\nNOMBRE DEL COMERCIO" → "NOMBRE DEL COMERCIO")
   function campo(texto, etiqueta) {
     var re = new RegExp("(?:^|\\n)\\s*" + etiqueta + "\\s*:?\\s*\\n?\\s*([^\\n]+)", "i");
@@ -94,17 +102,50 @@ var Avisos = (function () {
                descripcion: campo(t, "Comercio") || "Consumo", ultimos4: tarjeta[2], cuenta: null,
                cuotas: cuotas, titular: titular, tarjeta: tarjeta[1].replace(/^Santander\s+/i, "") };
     }
+    // Transferencia enviada ("Aviso de transferencia"): pares etiqueta-valor Destinatario,
+    // Cuenta de origen ("Cuenta en Pesos XXX-XXX 1234"), CBU de Destino, Importe y Número de
+    // comprobante. No trae fecha: se usa la del mail.
+    if (/Informaci[oó]n sobre tu transferencia/i.test(t) && /Cuenta de origen/i.test(t)) {
+      var origen = entre(t, "Cuenta de origen", "CBU de Destino") || "";
+      var impT = importe(entre(t, "Importe", "N[uú]mero de comprobante") || "");
+      if (!impT) return null;
+      var destinatario = campo(t, "Destinatario");
+      var cbu = (campo(t, "CBU de Destino") || "").replace(/\D/g, "");
+      return { banco: "Santander", tipo: "transferencia_enviada", monto: -impT.valor,
+               moneda: /d[oó]lar/i.test(origen) ? "USD" : impT.moneda,
+               fecha: fechaLocal(recibido), hora: null,
+               descripcion: "Transferencia a " + (destinatario || "CBU " + cbu),
+               ultimos4: null, cuenta: (origen.match(/(\d{3,})\s*$/) || [])[1] || null,
+               cuotas: 1, titular: null, destinatario: destinatario, cbu: cbu || null,
+               comprobante: (campo(t, "N[uú]mero de comprobante") || "").replace(/\D/g, "") || null };
+    }
     return null;
   }
 
   var LECTORES = { "santander.com.ar": santander };
 
+  // Remitente original de un mail reenviado a mano: la primera línea "De:" / "From:" del cuerpo
+  // con la dirección de un banco conocido
+  function remitenteReenviado(texto) {
+    var re = /(?:^|\n)\s*\*?(?:De|From)\s*:?\*?\s*([^\n]*?@[a-z0-9.-]+[^\n]*)/gi, m;
+    while ((m = re.exec(texto))) {
+      if (bancoDe(dominioDe(m[1]))) return m[1].trim();
+    }
+    return null;
+  }
+
   function leer(mail) {
-    var banco = bancoDe(dominioDe(mail.de));
-    if (!banco || !LECTORES[banco]) return null;
     var t = textoPlano(mail.html);
+    var de = mail.de, reenviado = false;
+    if (!bancoDe(dominioDe(de))) {
+      de = remitenteReenviado(t);
+      reenviado = !!de;
+    }
+    var banco = bancoDe(dominioDe(de));
+    if (!banco || !LECTORES[banco]) return null;
     var r = LECTORES[banco](t, mail.asunto || "", mail.recibido || null);
     if (r && r.descripcion) r.descripcion = r.descripcion.replace(/\s+/g, " ").trim();
+    if (r && reenviado) { r.reenviado = true; r.remitente_original = de; }
     return r;
   }
 
@@ -137,6 +178,15 @@ var Avisos = (function () {
       var dm = ms.match(/^mx\.microsoft\.com\b[\s\S]*?dmarc=pass[^;]*?header\.from=([a-z0-9.-]+)/);
       if (dm && permitido(dm[1])) return true;
     }
+    // Reenviado a mano desde una casilla propia: el encabezado From es esa casilla y Gmail verificó
+    // SPF, DKIM y DMARC de su dominio (la firma del banco no viaja en un reenvío)
+    if (opciones.reenvioManual && origen && redirectores.indexOf(origen[1]) >= 0) {
+      var dom = origen[1].split("@")[1];
+      var desde = (encabezados(crudo).filter(function (h) { return h.nombre === "from"; })[0] || {}).valor || "";
+      if (redirectores.indexOf((desde.toLowerCase().match(/[a-z0-9._%+-]+@[a-z0-9.-]+/) || [])[0]) >= 0 &&
+          new RegExp("dkim=pass[^;]*?header\\.(?:i=@|d=)" + dom.replace(/\./g, "\\.")).test(v) &&
+          new RegExp("dmarc=pass[^;]*?header\\.from=" + dom.replace(/\./g, "\\.")).test(v)) return true;
+    }
     var arc = v.match(/arc=pass\s*\(([^)]*)\)/);
     if (arc) {
       var dk = arc[1].match(/dkim=pass\s+dkdomain=([a-z0-9.-]+)/);
@@ -146,5 +196,5 @@ var Avisos = (function () {
     return false;
   }
 
-  return { leer: leer, autentico: autentico, textoPlano: textoPlano, DOMINIOS: DOMINIOS };
+  return { leer: leer, autentico: autentico, textoPlano: textoPlano, dominioDe: dominioDe, bancoDe: bancoDe, DOMINIOS: DOMINIOS };
 })();

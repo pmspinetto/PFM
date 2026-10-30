@@ -12,7 +12,8 @@
 --   · transferencias a una cuenta propia (CBU/CVU de destino de otra cuenta activa): rubro
 --     "Transferencia interna" y queda en tránsito hasta que aparezca la entrada;
 --   · transferencias que coinciden con un vencimiento de v_flujo_proyectado (misma moneda y
---     signo, importe ±1 %, fecha ±3 días, sin registrar) lo registran en compromisos_registrados.
+--     signo, importe ±1 %, fecha ±3 días, sin registrar) lo registran en compromisos_registrados
+--     y, si ninguna regla les da rubro, toman el rubro y el bien del compromiso.
 -- No modifica datos existentes.
 -- =====================================================================
 
@@ -47,6 +48,8 @@ declare
   v_k_id     bigint;
   v_k_fecha  date;
   v_k_agui   boolean;
+  v_k_rubro  bigint;
+  v_k_activo bigint;
   rg         record;
 begin
   if not (es_autorizado() or exists (select 1 from capturadores where user_id = auth.uid())) then
@@ -146,7 +149,20 @@ begin
     end if;
   end if;
 
-  -- Rubro por las reglas automáticas (salvo transferencias internas)
+  -- Transferencia que coincide con un vencimiento sin registrar (misma moneda y signo, ±1 %, ±3 días)
+  if v_interna is null and a->>'tipo' in ('transferencia_enviada', 'transferencia_recibida') then
+    select f.compromiso_id, f.fecha::date, f.aguinaldo, k.rubro_id, k.activo_id
+      into v_k_id, v_k_fecha, v_k_agui, v_k_rubro, v_k_activo
+    from v_flujo_proyectado f
+    join compromisos k on k.id = f.compromiso_id
+    where f.moneda = a->>'moneda' and sign(f.monto) = sign(v_monto)
+      and abs(abs(f.monto) - abs(v_monto)) <= abs(f.monto) * 0.01
+      and abs(f.fecha::date - v_fecha) <= 3
+    order by abs(f.fecha::date - v_fecha), abs(abs(f.monto) - abs(v_monto)), f.compromiso_id
+    limit 1;
+  end if;
+
+  -- Rubro por las reglas automáticas (salvo transferencias internas); si ninguna aplica, el del compromiso
   select * into rg from reglas
   where v_interna is null and modo = 'auto' and v_desc ilike patron
     and (monto_exacto is null or abs(monto_exacto) = abs(v_monto))
@@ -158,7 +174,7 @@ begin
                            cuota_nro, cuotas_total, comprobante, id_externo, origen, confianza,
                            estado_conciliacion, notas)
   values (v_cuenta, v_plastico, v_fecha, v_desc, v_monto, a->>'moneda',
-          coalesce(v_interna, rg.rubro_id), v_persona, rg.beneficiario_id, rg.activo_id, coalesce(rg.es_extraordinario, false),
+          coalesce(v_interna, rg.rubro_id, v_k_rubro), v_persona, rg.beneficiario_id, coalesce(rg.activo_id, v_k_activo), coalesce(rg.es_extraordinario, false),
           case when v_cuotas > 1 then 1 end, case when v_cuotas > 1 then v_cuotas end,
           v_comp, v_id_ext, 'mail', 'probable', 'pendiente',
           concat_ws(' · ',
@@ -180,19 +196,10 @@ begin
   end if;
 
   -- Transferencia que paga o cobra un compromiso: ese vencimiento deja de proyectarse
-  if v_mov is not null and v_interna is null and a->>'tipo' in ('transferencia_enviada', 'transferencia_recibida') then
-    select f.compromiso_id, f.fecha::date, f.aguinaldo into v_k_id, v_k_fecha, v_k_agui
-    from v_flujo_proyectado f
-    where f.moneda = a->>'moneda' and sign(f.monto) = sign(v_monto)
-      and abs(abs(f.monto) - abs(v_monto)) <= abs(f.monto) * 0.01
-      and abs(f.fecha::date - v_fecha) <= 3
-    order by abs(f.fecha::date - v_fecha), abs(abs(f.monto) - abs(v_monto)), f.compromiso_id
-    limit 1;
-    if v_k_id is not null then
-      insert into compromisos_registrados (compromiso_id, fecha, aguinaldo, movimiento_id)
-      values (v_k_id, v_k_fecha, v_k_agui, v_mov)
-      on conflict (compromiso_id, fecha, aguinaldo) do nothing;
-    end if;
+  if v_mov is not null and v_k_id is not null then
+    insert into compromisos_registrados (compromiso_id, fecha, aguinaldo, movimiento_id)
+    values (v_k_id, v_k_fecha, v_k_agui, v_mov)
+    on conflict (compromiso_id, fecha, aguinaldo) do nothing;
   end if;
 
   update avisos set estado = 'registrado', cuenta_id = v_cuenta, movimiento_id = v_mov where id = v_aviso;

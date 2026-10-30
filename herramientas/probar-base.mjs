@@ -261,10 +261,11 @@ await run(`delete from compromisos_registrados; delete from compromisos; delete 
   update cuentas set cbu_cvu = '0000003100000000000099' where id = 4;
   insert into rubros (nombre, padre_id, tipo) select 'Colegio', id, 'gasto' from rubros where nombre = 'Varios' on conflict do nothing;
   insert into reglas (prioridad, patron, modo, rubro_id) select 40, '%COLEGIO%', 'auto', min(id) from rubros where nombre = 'Colegio';
-  insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima) values ('Cuota matrícula', 'educacion', -500000, 'ARS', 'unica', current_date);`);
+  insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima) values ('Cuota matrícula', 'educacion', -500000, 'ARS', 'unica', current_date);
+  update compromisos set rubro_id = (select min(id) from rubros where nombre = 'Colegio') where descripcion = 'Cuota matrícula';`);
 const aviso = async (p) => (await db.query("select registrar_aviso($1::jsonb) as r", [JSON.stringify(p)])).rows[0].r;
 const tr = (extra) => ({ banco: "Banco", tipo: "transferencia_enviada", monto: -500000, moneda: "ARS", fecha: new Date().toISOString().slice(0, 10),
-  cuenta: "123456/7", descripcion: "Transferencia a COLEGIO EJEMPLO", destinatario: "COLEGIO EJEMPLO", cbu: "0110000000000000000011", comprobante: "000111222", ...extra });
+  cuenta: "123456/7", descripcion: "Transferencia a 30000000000", destinatario: "COLEGIO EJEMPLO", cbu: "0110000000000000000011", comprobante: "000111222", ...extra });
 console.log("X no reconocido:", await aviso({ message_id: "m0", remitente: "banco", asunto: "Promo", estado: "no_reconocido", datos: { extracto: "..." } }));
 console.log("X error y luego reconocido:", await aviso({ message_id: "m1", asunto: "Transferencia", estado: "error", datos: { error: "falló" } }),
   await aviso({ message_id: "m1", remitente: "banco", asunto: "Transferencia", recibido: new Date().toISOString(), aviso: tr({}) }));
