@@ -1287,17 +1287,18 @@ function anotarMovimiento(op = {}) {
   const personas = ref.personas.filter((x) => x.tipo !== "empresa");
   let sg = op.signo ?? -1;
   abrirVentana(op.titulo ?? "Anotar un movimiento", `
-    <div class="alterna" role="group" aria-label="Tipo"><button type="button" data-sg="-1" class="${sg < 0 ? "activo" : ""}">Gasto o pago</button><button type="button" data-sg="1" class="${sg > 0 ? "activo" : ""}">Ingreso</button></div>
+    <div class="alterna" role="group" aria-label="Tipo"><button type="button" data-sg="-1" class="${sg < 0 ? "activo" : ""}">Gasto o pago</button><button type="button" data-sg="1" class="${sg > 0 ? "activo" : ""}">Ingreso</button>${op.registro ? "" : `<button type="button" data-sg="0">Entre mis cuentas</button>`}</div>
     <div class="form-grid">
-      <div><label for="amCuenta">Cuenta</label><select id="amCuenta">${opciones(cuentas, op.cuenta_id ?? null, "Elegir cuenta")}</select></div>
+      <div><label for="amCuenta" id="amLblCuenta">Cuenta</label><select id="amCuenta">${opciones(cuentas, op.cuenta_id ?? null, "Elegir cuenta")}</select></div>
+      <div class="am-tr oculto"><label for="amHacia">Hacia</label><select id="amHacia">${opciones(cuentas.filter((c) => c.tipo !== "tarjeta_credito"), null, "Elegir cuenta")}</select></div>
       <div><label for="amMonto">Monto</label><input id="amMonto" type="text" inputmode="decimal" autocomplete="off" value="${op.monto ? fmt.format(Math.abs(op.monto)) : ""}"></div>
       <div class="am-mon"><label for="amMoneda">Moneda</label><select id="amMoneda"><option value="ARS">Pesos</option><option value="USD" ${op.moneda === "USD" ? "selected" : ""}>Dólares</option></select></div>
       <div><label for="amFecha">Fecha</label><input id="amFecha" type="date" value="${op.fecha ?? hoyISO()}"></div>
       <div style="grid-column:1/-1"><label for="amDesc">Qué fue</label><input id="amDesc" type="text" value="${esc(op.descripcion ?? "")}" placeholder="Sueldo, transferencia de…, pago de…"></div>
-      <div><label for="amRubro">Rubro</label><select id="amRubro">${opcionesRubro(op.rubro_id ?? null)}</select></div>
-      <div><label for="amQuien">Quién</label><select id="amQuien">${opciones(personas.filter((x) => x.tipo !== "grupo"), ref.personas.find((x) => x.tipo === "titular")?.id, "—")}</select></div>
-      <div><label for="amPara">Para quién</label><select id="amPara">${opciones(personas, null, "—")}</select></div>
-      <div><label for="amActivo">Bien</label><select id="amActivo">${opciones(ref.activos, op.activo_id ?? null, "—")}</select></div>
+      <div class="am-gi"><label for="amRubro">Rubro</label><select id="amRubro">${opcionesRubro(op.rubro_id ?? null)}</select></div>
+      <div class="am-gi"><label for="amQuien">Quién</label><select id="amQuien">${opciones(personas.filter((x) => x.tipo !== "grupo"), ref.personas.find((x) => x.tipo === "titular")?.id, "—")}</select></div>
+      <div class="am-gi"><label for="amPara">Para quién</label><select id="amPara">${opciones(personas, null, "—")}</select></div>
+      <div class="am-gi"><label for="amActivo">Bien</label><select id="amActivo">${opciones(ref.activos, op.activo_id ?? null, "—")}</select></div>
       <div class="acciones"><button id="amGuardar" type="button">Anotar</button><span id="amMsg" class="tenue"></span></div>
     </div>
     <p class="tenue">Queda como anotado a mano. Cuando importes el resumen de esa cuenta, si trae un movimiento del mismo importe con fecha a 5 días o menos, lo reemplaza; si no lo trae, queda en Pendientes para revisar.</p>`);
@@ -1310,11 +1311,16 @@ function anotarMovimiento(op = {}) {
   $("amCuenta").onchange = verMoneda; verMoneda();
   $("detCuerpo").querySelectorAll("[data-sg]").forEach((b) => b.onclick = () => {
     sg = +b.dataset.sg; $("detCuerpo").querySelectorAll("[data-sg]").forEach((x) => x.classList.toggle("activo", x === b));
+    // Entre mis cuentas: cuenta de origen y de destino, sin rubro (es neutro)
+    $("amLblCuenta").textContent = sg === 0 ? "Desde" : "Cuenta";
+    $("detCuerpo").querySelectorAll(".am-tr").forEach((x) => x.classList.toggle("oculto", sg !== 0));
+    $("detCuerpo").querySelectorAll(".am-gi").forEach((x) => x.classList.toggle("oculto", sg === 0));
   });
   $("amGuardar").onclick = async () => {
     const n = numeroAR($("amMonto").value), c = cuentaDe(+$("amCuenta").value), fecha = $("amFecha").value || hoyISO();
     if (!c) return ($("amMsg").textContent = "Elige la cuenta.");
     if (!n) return ($("amMsg").textContent = "Escribe el monto.");
+    if (sg === 0) return anotarTransferencia(c, cuentaDe(+$("amHacia").value), Math.abs(n), $("amMoneda").value, fecha, op);
     if (!$("amRubro").value) return ($("amMsg").textContent = "Elige un rubro.");
     const val = (id) => ($(id).value ? +$(id).value : null), moneda = $("amMoneda").value;
     $("amGuardar").disabled = true;
@@ -1337,6 +1343,30 @@ function anotarMovimiento(op = {}) {
       ? ` Es anterior o igual al último saldo conocido (${dm(base)}), así que no cambia el saldo de la cuenta; sí cuenta en El mes.` : ""}`;
     await op.alGuardar?.(aviso);
   };
+}
+
+// Transferencia entre cuentas propias anotada a mano: salida y entrada vinculadas como transferencia interna.
+// Cuando llegue el resumen de cada cuenta, guardar_importacion reemplaza cada punta y vuelve a vincularlas.
+async function anotarTransferencia(desde, hacia, monto, moneda, fecha, op) {
+  if (!hacia) return ($("amMsg").textContent = "Elige la cuenta de destino.");
+  if (hacia.id === desde.id) return ($("amMsg").textContent = "Elige dos cuentas distintas.");
+  if (hacia.moneda !== "BIMONEDA" && hacia.moneda !== moneda) return ($("amMsg").textContent = "Las dos cuentas tienen que ser de la misma moneda.");
+  const rubro = ref.rubros.find((r) => r.nombre === "Transferencia interna" && r.padre_id)?.id ?? null;
+  const desc = $("amDesc").value.trim();
+  const mov = (c, signo, texto) => ({
+    cuenta_id: c.id, fecha, moneda, monto: signo * monto, tipo_cambio: moneda === "USD" ? tc?.valor ?? null : null,
+    descripcion_original: desc || texto, rubro_id: rubro, persona_id: desde.persona_id ?? null,
+    origen: "manual", confianza: "confirmado", estado_conciliacion: "no_aplica", id_externo: "manual:" + crypto.randomUUID(),
+  });
+  $("amGuardar").disabled = true;
+  const { data, error } = await sb.from("movimientos")
+    .insert([mov(desde, -1, `Transferencia a ${hacia.alias}`), mov(hacia, 1, `Transferencia de ${desde.alias}`)]).select("id, monto");
+  if (error) { $("amGuardar").disabled = false; return ($("amMsg").innerHTML = `<span class="menos">No se pudo anotar: ${esc(error.message)}</span>`); }
+  const sal = data.find((m) => m.monto < 0), ent = data.find((m) => m.monto > 0);
+  const { error: e2 } = await sb.from("transferencias_internas").insert({ mov_salida_id: sal.id, mov_entrada_id: ent.id, tipo: "transferencia" });
+  $("detalle").close();
+  await op.alGuardar?.(`Transferencia de ${conMoneda(monto, moneda)} del ${dm(fecha)} anotada: de ${esc(desde.alias)} a ${esc(hacia.alias)}.${e2
+    ? ` No se pudieron vincular las dos puntas (${esc(e2.message)}).` : ""}`);
 }
 
 // ---------------- LO QUE VIENE ----------------
