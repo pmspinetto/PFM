@@ -1128,6 +1128,22 @@ function filtrarLineas(lineas) {
     (!medio || MEDIOS[medio].includes(cuentaDe(l.cuenta_id)?.tipo)));
 }
 
+// Por mes, las cuentas con resúmenes que todavía no tienen uno que cubra ese mes (el cierre de una tarjeta
+// puede caer hasta 10 días antes de fin de mes). Solo cuentan las cuentas cuyo primer resumen es anterior al fin del mes.
+function faltanResumenes(meses, saldosResumen) {
+  const rango = {};
+  for (const s of saldosResumen) {
+    const r = (rango[s.cuenta_id] ??= { min: s.fecha, max: s.fecha });
+    if (s.fecha < r.min) r.min = s.fecha;
+    if (s.fecha > r.max) r.max = s.fecha;
+  }
+  return Object.fromEntries(meses.map((m) => {
+    const fin = sumarDias(sumarMeses(m + "-01", 1), -1);
+    return [m, Object.entries(rango).filter(([id, r]) => cuentaDe(+id)?.activa && r.min <= fin && r.max < sumarDias(fin, -10))
+      .map(([id]) => cuentaDe(+id).alias).sort()];
+  }));
+}
+
 async function lineasDelRango({ desde, hasta }) {
   const { data, error } = await sb.from("v_lineas").select("*").gte("fecha", desde).lte("fecha", hasta);
   if (error) throw error;
@@ -1159,11 +1175,14 @@ function resumirMes(lineas) {
 async function verMes() {
   try {
     const mes = $("mesSel").value || hoyISO().slice(0, 7), n = +$("fPeriodo").value || 1;
-    const [act, prev, anio] = await Promise.all([lineasDelRango(rangoMeses(mes, n)), lineasDelRango(rangoMeses(mes, n, 1)), lineasDelRango(rangoMeses(mes, 12))]);
+    const [act, prev, anio, rq] = await Promise.all([lineasDelRango(rangoMeses(mes, n)), lineasDelRango(rangoMeses(mes, n, 1)), lineasDelRango(rangoMeses(mes, 12)),
+      sb.from("saldos").select("cuenta_id, fecha").eq("fuente", "resumen")]);
+    if (rq.error) throw rq.error;
     // Evolución de los últimos 12 meses (con los mismos filtros)
     const meses12 = Array.from({ length: 12 }, (_, i) => { const d = new Date(Date.UTC(+mes.slice(0, 4), +mes.slice(5, 7) - 12 + i, 1)); return d.toISOString().slice(0, 7); });
     const porMes = meses12.map((m) => resumirMes(anio.filter((l) => l.fecha.startsWith(m))));
     const etiquetaMes = (m) => new Date(m + "-15T12:00:00Z").toLocaleDateString("es-AR", { month: "short", year: "2-digit" });
+    const faltan = faltanResumenes(meses12, rq.data);
     const periodo = n === 1 ? "mes" : `${n} meses`;
     const r = resumirMes(act), p = resumirMes(prev);
     const varPct = p.recurrente ? ((r.recurrente - p.recurrente) / p.recurrente) * 100 : null;
@@ -1192,7 +1211,9 @@ async function verMes() {
       </div>
       ${r.sinTc ? `<div class="msg info">${r.sinTc} movimientos en dólares no tienen tipo de cambio y no suman al total.</div>` : ""}
       ${act.length ? "" : `<div class="msg info">No hay movimientos cargados para este período y filtros.</div>`}
-      <div class="panel"><h3>Últimos 12 meses</h3><div class="lienzo"><canvas id="gEvol"></canvas></div></div>
+      <div class="panel"><h3>Últimos 12 meses</h3><div class="lienzo"><canvas id="gEvol"></canvas></div>
+        ${meses12.some((m) => faltan[m].length) ? `<p class="tenue">Las barras claras son meses parciales: faltan resúmenes (${meses12.filter((m) => faltan[m].length)
+          .map((m) => `${etiquetaMes(m)}: ${faltan[m].map(esc).join(", ")}`).join("; ")}). Hasta que los importes, ese mes muestra solo lo anotado a mano y lo llegado por mail.</p>` : ""}</div>
       <div class="dos">
         <div class="panel"><h3>Gasto por grupo</h3><div class="lienzo"><canvas id="gMes"></canvas></div></div>
         <div class="panel"><h3>Por rubro</h3><table class="mini"><tbody>${lista(r.rubros) || `<tr><td class="tenue">Sin gastos.</td></tr>`}</tbody></table></div>
@@ -1208,13 +1229,16 @@ async function verMes() {
       datasets: [{ data: grupos.map((g) => Math.round(totGrupo(g[1]))), backgroundColor: paleta(grupos.length), borderColor: css("--papel"), borderWidth: 2 }] },
       options: opcionesDona(pesos) });
     const compacto = (v) => Math.abs(v) >= 1e6 ? "$ " + (v / 1e6).toFixed(1).replace(".", ",") + " M" : Math.abs(v) >= 1e3 ? "$ " + Math.round(v / 1e3) + " mil" : pesos(v);
-    grafico("gEvol", { data: { labels: meses12.map(etiquetaMes), datasets: [
-        { type: "bar", label: "Gasto recurrente", data: porMes.map((x) => Math.round(x.recurrente)), backgroundColor: css("--marca"), borderRadius: 4, stack: "g", maxBarThickness: 34 },
-        { type: "bar", label: "Gasto extraordinario", data: porMes.map((x) => Math.round(x.extra)), backgroundColor: css("--laton"), borderRadius: 4, stack: "g", maxBarThickness: 34 },
+    // Meses parciales: la misma barra, más clara
+    const tono = (color) => meses12.map((m) => faltan[m].length && /^#[0-9a-f]{6}$/i.test(color) ? color + "59" : color);
+    grafico("gEvol", { data: { labels: meses12.map((m) => etiquetaMes(m) + (faltan[m].length ? " *" : "")), datasets: [
+        { type: "bar", label: "Gasto recurrente", data: porMes.map((x) => Math.round(x.recurrente)), backgroundColor: tono(css("--marca")), borderRadius: 4, stack: "g", maxBarThickness: 34 },
+        { type: "bar", label: "Gasto extraordinario", data: porMes.map((x) => Math.round(x.extra)), backgroundColor: tono(css("--laton")), borderRadius: 4, stack: "g", maxBarThickness: 34 },
         { type: "line", label: "Ingresos", stack: "ingresos", data: porMes.map((x) => Math.round(x.ingreso)), borderColor: css("--entra"), backgroundColor: css("--entra"), borderWidth: 2, pointRadius: 3, tension: .3 } ] },
       options: { maintainAspectRatio: false, interaction: { mode: "index", intersect: false },
                  scales: { x: { stacked: true, grid: { display: false } }, y: { stacked: true, ticks: { callback: compacto } } },
-                 plugins: { tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${pesos(c.raw)}` } } } } });
+                 plugins: { tooltip: { callbacks: { label: (c) => ` ${c.dataset.label}: ${pesos(c.raw)}`,
+                   footer: (cs) => { const f = faltan[meses12[cs[0].dataIndex]]; return f.length ? `Parcial, faltan: ${f.join(", ")}` : ""; } } } } } });
   } catch (e) { $("mes-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
 }
 
