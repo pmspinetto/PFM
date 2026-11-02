@@ -283,3 +283,13 @@ console.log("X resumen que lo trae:", await guardar({ cuenta_id: 1, documento: d
 console.log("X después del resumen:", (await db.query("select origen, count(*)::int from movimientos group by 1 order by 1")).rows,
   (await db.query("select estado, count(*)::int from avisos group by 1 order by 1")).rows,
   "| registro sigue:", (await db.query("select count(*)::int as n from compromisos_registrados")).rows[0].n);
+
+// Y) Aviso de algo ya anotado a mano: lo confirma, no lo duplica
+await run(`insert into movimientos (cuenta_id, fecha, descripcion_original, monto, moneda, origen, confianza, estado_conciliacion, id_externo)
+  values (1, current_date, 'Transferencia entre cuentas', -70000, 'ARS', 'manual', 'confirmado', 'no_aplica', 'manual:y1')`);
+console.log("Y aviso de lo anotado:", await aviso({ message_id: "y1", asunto: "Transferencia", recibido: new Date().toISOString(),
+  aviso: tr({ monto: -70000, comprobante: "777", descripcion: "Transferencia a otro" }) }));
+console.log("Y movimientos de 70000:", (await db.query("select origen, comprobante, notas from movimientos where monto = -70000")).rows);
+console.log("Y otro aviso igual (sin anotado libre):", (await aviso({ message_id: "y2", asunto: "Transferencia", recibido: new Date().toISOString(),
+  aviso: tr({ monto: -70000, comprobante: "778", descripcion: "Transferencia a otro" }) })).estado,
+  (await db.query("select count(*)::int as n from movimientos where monto = -70000")).rows[0].n);
