@@ -1323,6 +1323,7 @@ function anotarMovimiento(op = {}) {
     if (sg === 0) return anotarTransferencia(c, cuentaDe(+$("amHacia").value), Math.abs(n), $("amMoneda").value, fecha, op);
     if (!$("amRubro").value) return ($("amMsg").textContent = "Elige un rubro.");
     const val = (id) => ($(id).value ? +$(id).value : null), moneda = $("amMoneda").value;
+    if (!(await noDuplica(c, moneda, sg * Math.abs(n), fecha))) return;
     $("amGuardar").disabled = true;
     const { data, error } = await sb.from("movimientos").insert({
       cuenta_id: c.id, fecha, moneda, monto: sg * Math.abs(n), tipo_cambio: moneda === "USD" ? tc?.valor ?? null : null,
@@ -1345,12 +1346,22 @@ function anotarMovimiento(op = {}) {
   };
 }
 
+// Antes de anotar: si la cuenta ya tiene un movimiento del mismo importe a 5 días o menos (por ejemplo, llegado por mail), pregunta
+async function noDuplica(c, moneda, monto, fecha) {
+  const { data } = await sb.from("movimientos").select("fecha, descripcion_original, origen").eq("cuenta_id", c.id).eq("moneda", moneda)
+    .eq("monto", monto).gte("fecha", sumarDias(fecha, -5)).lte("fecha", sumarDias(fecha, 5)).limit(1);
+  const m = data?.[0];
+  return !m || confirm(`${c.alias} ya tiene ${conMoneda(Math.abs(monto), moneda)} el ${dm(m.fecha)} ("${m.descripcion_original}"${
+    m.origen === "mail" ? ", llegado por mail" : ""}). ¿Lo anoto igual? Si es el mismo movimiento, cancela.`);
+}
+
 // Transferencia entre cuentas propias anotada a mano: salida y entrada vinculadas como transferencia interna.
 // Cuando llegue el resumen de cada cuenta, guardar_importacion reemplaza cada punta y vuelve a vincularlas.
 async function anotarTransferencia(desde, hacia, monto, moneda, fecha, op) {
   if (!hacia) return ($("amMsg").textContent = "Elige la cuenta de destino.");
   if (hacia.id === desde.id) return ($("amMsg").textContent = "Elige dos cuentas distintas.");
   if (hacia.moneda !== "BIMONEDA" && hacia.moneda !== moneda) return ($("amMsg").textContent = "Las dos cuentas tienen que ser de la misma moneda.");
+  if (!(await noDuplica(desde, moneda, -monto, fecha)) || !(await noDuplica(hacia, moneda, monto, fecha))) return;
   const rubro = ref.rubros.find((r) => r.nombre === "Transferencia interna" && r.padre_id)?.id ?? null;
   const desc = $("amDesc").value.trim();
   const mov = (c, signo, texto) => ({
