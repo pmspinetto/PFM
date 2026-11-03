@@ -302,3 +302,5 @@ const vencidosV = async () => (await db.query("select descripcion from v_flujo_p
 console.log("V vencidos:", await vencidosV());
 await run(`insert into compromisos_registrados (compromiso_id, fecha, omitido) select id, fecha_proxima, true from compromisos where descripcion = 'Pago vencido'`);
 console.log("V después de omitir el pago:", await vencidosV(), "| omitidos:", (await db.query("select count(*)::int as n from compromisos_registrados where omitido")).rows[0].n);
+await run(`insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima) values ('Deuda vencida grande', 'otro', -999999999, 'ARS', 'unica', current_date - 5)`);
+console.log("V alerta con un vencido impago (avisa hoy):", await liq());

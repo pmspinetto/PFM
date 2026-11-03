@@ -879,13 +879,13 @@ const COMO = {
   ingresos: `<p><code>Ingresos = Σ importe en pesos</code> de los movimientos del período con rubro de tipo <b>ingreso</b> (sueldos, alquileres cobrados, rendimientos…), con los filtros elegidos. Las transferencias entre cuentas propias no son ingresos.</p>`,
   ahorro: `<p><code>Ahorro = Σ (−importe en pesos)</code> de los movimientos del período con rubro de tipo <b>ahorro</b>: la parte de capital de las cuotas de préstamos (que reduce la deuda) y lo invertido.</p>`,
   dispViene: `<p><code>Disponible hoy = Σ saldo de las cuentas en pesos que no son tarjetas</code>, igual que en Hoy. Es el punto de partida del saldo proyectado. Los dólares no entran en esta proyección.</p>`,
-  egresos: `<p><code>Egresos = Σ |importe|</code> de los compromisos negativos en pesos que vencen dentro del horizonte elegido (1 semana a 6 meses).</p><ul>
+  egresos: `<p><code>Egresos = Σ |importe|</code> de los compromisos negativos en pesos que vencen dentro del horizonte elegido (1 semana a 6 meses), más los vencidos que todavía no se registraron ni se omitieron (cuentan como si se pagaran hoy).</p><ul>
     <li>Los compromisos se repiten según su frecuencia (cada mes, cada 3, 6 o 12 meses) desde su primera fecha; los únicos, una vez.</li>
     <li>Cada resumen de tarjeta agenda su vencimiento con el saldo a pagar y los próximos con las cuotas ya conocidas.</li>
     <li>Los que ajustan por IPC (por ejemplo, un alquiler trimestral) se multiplican en cada mes de ajuste por la inflación de los meses que terminan dos meses antes; los meses no publicados se estiman con el promedio de los últimos tres.</li>
     <li>Los que ajustan por UVA se proyectan con el importe cargado, sin indexar.</li></ul>`,
-  ingresosEsp: `<p><code>Ingresos esperados = Σ importe</code> de los compromisos positivos en pesos dentro del horizonte elegido (por ejemplo, sueldos, alquileres a cobrar o el vencimiento de un plazo fijo). Los que ajustan por IPC ya incluyen el ajuste que corresponda a cada mes. Los sueldos con aguinaldo suman, además, el porcentaje elegido del sueldo el 30/06 y el 18/12 (estimado).</p>`,
-  minimo: `<p>El saldo proyectado arranca en el disponible de hoy y, en orden de fecha, suma o resta cada compromiso: <code>saldo después = saldo anterior + importe del compromiso</code>.</p><p><code>Saldo más bajo = mínimo del saldo al cierre de cada día</code> (lo que entra y sale el mismo día se compensa), incluido el saldo de hoy. Si es negativo, antes de esa fecha vas a necesitar fondos. La alerta de liquidez de Hoy usa este mismo cálculo para los próximos 7 días.</p>`,
+  ingresosEsp: `<p><code>Ingresos esperados = Σ importe</code> de los compromisos positivos en pesos dentro del horizonte elegido (por ejemplo, sueldos, alquileres a cobrar o el vencimiento de un plazo fijo), más los vencidos sin registrar ni omitir (cuentan como si se cobraran hoy). Los que ajustan por IPC ya incluyen el ajuste que corresponda a cada mes. Los sueldos con aguinaldo suman, además, el porcentaje elegido del sueldo el 30/06 y el 18/12 (estimado).</p>`,
+  minimo: `<p>El saldo proyectado arranca en el disponible de hoy, suma o resta hoy los vencidos pendientes y, en orden de fecha, cada compromiso: <code>saldo después = saldo anterior + importe del compromiso</code>.</p><p><code>Saldo más bajo = mínimo del saldo al cierre de cada día</code> (lo que entra y sale el mismo día se compensa), incluido el saldo de hoy. Si es negativo, antes de esa fecha vas a necesitar fondos. La alerta de liquidez de Hoy usa este mismo cálculo para los próximos 7 días.</p>`,
   patNeto: `<p><code>Patrimonio neto = liquidez + bienes e inversiones − deudas</code>, todo en dólares al último MEP.</p><p>Los préstamos restan su saldo de capital; las tarjetas, su deuda neta (solo se descuentan los pagos que ya figuran en una cuenta).</p>`,
   liquidez: `<p><code>Liquidez = Σ saldo de las cuentas que no son tarjetas</code>, pasadas a dólares: <code>pesos ÷ MEP</code>; las cuentas en dólares, tal cual.</p>${SALDO_CUENTA}`,
   bienes: `<p><code>Bienes e inversiones = Σ valor de cada bien</code>, en dólares.</p><ul>
@@ -1451,7 +1451,9 @@ async function verViene() {
     const inicial = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito" && s.moneda === "ARS")
                       .reduce((a, s) => a + Number(s.saldo_estimado), 0);
     let saldo = inicial;
-    const filas = fl.data.filter((c) => c.moneda === "ARS").map((c) => { saldo += Number(c.monto); return { ...c, saldo }; });
+    // Los vencidos pendientes en pesos son deuda (o cobros) que sigue en pie: entran hoy en el saldo proyectado
+    const filas = [...vencidos.filter((c) => c.moneda === "ARS").map((c) => ({ ...c, vencio: c.fecha, fecha: hoy })), ...fl.data.filter((c) => c.moneda === "ARS")]
+      .map((c) => { saldo += Number(c.monto); return { ...c, saldo }; });
     const egresos = filas.filter((f) => f.monto < 0).reduce((a, f) => a - Number(f.monto), 0);
     const ingresos = filas.filter((f) => f.monto > 0).reduce((a, f) => a + Number(f.monto), 0);
     // Saldo más bajo al cierre de cada día (lo que entra y sale el mismo día se compensa), igual que el gráfico y la alerta de Hoy
@@ -1462,7 +1464,7 @@ async function verViene() {
     const disp = ss.filter((s) => s.cuenta?.tipo !== "tarjeta_credito" && s.moneda === "ARS").sort((a, b) => b.saldo_estimado - a.saldo_estimado);
     const detDisp = tablaDetalle(disp.map((s) => [esc(s.alias), pesos(s.saldo_estimado)]), ["Total", pesos(inicial)]);
     const detFlujo = (cond, vacio) => { const xs = filas.filter(cond);
-      return xs.length ? tablaDetalle(xs.map((f) => [`${dm(f.fecha)} · ${esc(f.descripcion)}`, `<span class="${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</span>`, `Saldo después: ${pesos(f.saldo)}`]),
+      return xs.length ? tablaDetalle(xs.map((f) => [`${f.vencio ? `Vencido el ${dm(f.vencio)}` : dm(f.fecha)} · ${esc(f.descripcion)}`, `<span class="${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</span>`, `Saldo después: ${pesos(f.saldo)}`]),
         ["Total", pesos(xs.reduce((a, f) => a + Number(f.monto), 0))]) : `<p class="tenue">${vacio}</p>`; };
     const pc = proyectarPorCuenta(ss, filas, Object.fromEntries(kq.data.map((k) => [k.id, k.cuenta_id])), hoy, fin);
     const textoPase = (p) => p.de.c.tipo === "caja_efectivo" ? `Deposita <strong>${pesos(p.monto)}</strong> de ${esc(p.de.c.alias)} en ${esc(p.a.c.alias)}`
@@ -1485,7 +1487,7 @@ async function verViene() {
             · <button class="link" data-venc-omitir="${i}" type="button">Omitir</button></td></tr>`).join("")}
         </tbody></table></div>
         <p class="tenue" style="margin-bottom:0">${[totVenc(1) && `Ingresos pendientes: ${totVenc(1)}`, totVenc(-1) && `Egresos pendientes: ${totVenc(-1)}`].filter(Boolean).join(" · ")}.
-          No entran en el saldo proyectado de abajo. Quedan acá hasta que los registres (se anotan en su cuenta) o los omitas si no se van a cobrar ni pagar.</p></div>` : ""}
+          Los que son en pesos se suman al saldo proyectado de abajo como si se cobraran o pagaran hoy. Quedan acá hasta que los registres (se anotan en su cuenta) o los omitas si no se van a cobrar ni pagar.</p></div>` : ""}
       <div class="cifras">
         ${cifra("Disponible hoy en pesos", pesos(inicial), "", "total", detDisp, COMO.dispViene)}
         ${cifra(`Egresos comprometidos (${hz})`, pesos(egresos), "", "", detFlujo((f) => f.monto < 0, "No hay egresos comprometidos."), COMO.egresos)}
@@ -1509,7 +1511,7 @@ async function verViene() {
         ${pc.sinCuenta.length ? `<p class="tenue">Sin cuenta asignada: ${pc.sinCuenta.map((f) => `${esc(f.descripcion)} (${dm(f.fecha)}, ${pesos(f.monto)})`).join(", ")}. No entran en esta tabla ni en las transferencias sugeridas: asígnales una cuenta con "Editar" en Ingresos y gastos fijos.</p>` : ""}
         <p class="tenue">Cada compromiso se imputa a su cuenta; los vencimientos de tarjeta, a la cuenta en pesos del mismo banco y titular. Las transferencias sugeridas toman de las cuentas a las que les sobra plata ese día sin que queden en rojo después. El punto más bajo de cada cuenta no incluye esas transferencias.</p></div>
       <div class="panel"><h3>Próximos vencimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
-        ${filas.map((f, i) => { const kk = !f.aguinaldo && fijos.find((x) => x.id === f.compromiso_id), nc = kk && cuotasDe(kk);
+        ${filas.map((f, i) => { if (f.vencio) return ""; const kk = !f.aguinaldo && fijos.find((x) => x.id === f.compromiso_id), nc = kk && cuotasDe(kk);
           return `<tr><td>${dm(f.fecha)}</td><td>${esc(f.descripcion)}${nc ? ` <span class="chip">cuota ${cuotaNro(kk, f.fecha)} de ${nc}</span>` : ""}${f.indexacion !== "ninguna" ? ` <span class="tenue">(${f.indexacion === "uva" ? "ajusta por UVA" : f.indexacion === "ipc" ? "ajustado por IPC, estimado" : "estimado"})</span>` : ""}</td>
           <td class="num ${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</td><td class="num tenue">${pesos(f.saldo)}</td>
           <td>${f.tipo === "vencimiento_tarjeta" ? "" : `<button class="link" data-registrar="${i}" type="button">${f.monto > 0 ? "Ya entró" : "Ya lo pagué"}</button>`}</td></tr>`; }).join("") ||
