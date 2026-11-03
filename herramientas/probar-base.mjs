@@ -293,3 +293,12 @@ console.log("Y movimientos de 70000:", (await db.query("select origen, comproban
 console.log("Y otro aviso igual (sin anotado libre):", (await aviso({ message_id: "y2", asunto: "Transferencia", recibido: new Date().toISOString(),
   aviso: tr({ monto: -70000, comprobante: "778", descripcion: "Transferencia a otro" }) })).estado,
   (await db.query("select count(*)::int as n from movimientos where monto = -70000")).rows[0].n);
+
+// V) Vencidos pendientes: los anteriores a hoy siguen en la vista hasta registrarlos u omitirlos
+await run(`delete from compromisos_registrados; delete from compromisos;
+  insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima) values
+    ('Cobro vencido', 'otro', 1000, 'ARS', 'unica', current_date - 3), ('Pago vencido', 'otro', -2000, 'ARS', 'unica', current_date - 10)`);
+const vencidosV = async () => (await db.query("select descripcion from v_flujo_proyectado where fecha < current_date order by fecha")).rows.map((r) => r.descripcion);
+console.log("V vencidos:", await vencidosV());
+await run(`insert into compromisos_registrados (compromiso_id, fecha, omitido) select id, fecha_proxima, true from compromisos where descripcion = 'Pago vencido'`);
+console.log("V después de omitir el pago:", await vencidosV(), "| omitidos:", (await db.query("select count(*)::int as n from compromisos_registrados where omitido")).rows[0].n);

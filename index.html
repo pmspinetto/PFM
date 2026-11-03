@@ -132,6 +132,8 @@ td select{max-width:190px;padding:.3rem .45rem;min-height:2rem}
 tr.sin td{background:var(--error)}
 tr.sug td{background:var(--aviso)}
 .estado{font-size:.75rem;color:var(--tinta-2);white-space:nowrap}
+.panel.vencidos{border-color:var(--error-borde);background:var(--error)}
+.panel.vencidos h3{color:var(--sale)}
 .chip{display:inline-block;font-size:.7rem;font-weight:600;letter-spacing:.02em;color:var(--marca);background:var(--marca-2);border-radius:999px;padding:.05rem .5rem;margin-top:.2rem}
 
 /* ---- Mensajes ---- */
@@ -1418,14 +1420,18 @@ async function verViene() {
   try {
     document.querySelectorAll("#horizonte [data-dias]").forEach((b) => b.classList.toggle("activo", +b.dataset.dias === horizonte));
     const hoy = hoyISO(), fin = sumarDias(hoy, horizonte), hz = nombreHorizonte(horizonte);
-    const [ss, fl, cq, fq, kq] = await Promise.all([
+    const [ss, fl, cq, fq, kq, vq] = await Promise.all([
       saldos(),
       sb.from("v_flujo_proyectado").select("*").gte("fecha", hoy).lte("fecha", fin).order("fecha"),
       sb.from("movimientos").select("cuenta_id, fecha, descripcion_original, monto, moneda, cuota_nro, cuotas_total")
         .not("cuotas_total", "is", null).gte("fecha", sumarDias(hoy, -75)).lt("monto", 0),
       sb.from("compromisos").select("*").eq("activo", true).neq("tipo", "vencimiento_tarjeta").order("fecha_proxima"),
       sb.from("compromisos").select("id, cuenta_id, rubro_id, activo_id").eq("activo", true),
+      // Vencidos pendientes: fecha anterior a hoy y sin registrar ni omitir (la vista ya excluye compromisos_registrados)
+      sb.from("v_flujo_proyectado").select("*").lt("fecha", hoy).neq("monto", 0).order("fecha"),
     ]);
+    if (vq.error) throw vq.error;
+    const vencidos = vq.data;
     if (fl.error) throw fl.error;
     if (fq.error) throw fq.error;
     if (kq.error) throw kq.error;
@@ -1463,7 +1469,23 @@ async function verViene() {
       : p.a.c.tipo === "caja_efectivo" ? `Retira <strong>${pesos(p.monto)}</strong> de ${esc(p.de.c.alias)} para ${esc(p.a.c.alias)}`
       : `Transfiere <strong>${pesos(p.monto)}</strong> de ${esc(p.de.c.alias)} a ${esc(p.a.c.alias)}`;
 
+    const totVenc = (signo) => ["ARS", "USD"].map((mon) => vencidos.filter((f) => f.moneda === mon && Math.sign(f.monto) === signo)
+      .reduce((a, f) => a + Number(f.monto), 0)).map((v, i) => v ? conMoneda(v, i ? "USD" : "ARS") : "").filter(Boolean).join(" + ");
+    const diasDesde = (f) => Math.round((new Date(hoy + "T12:00:00Z") - new Date(f + "T12:00:00Z")) / 864e5);
+
     $("viene-c").innerHTML = `
+      ${vencidos.length ? `<div class="panel vencidos" id="pVencidos"><h3>Vencidos pendientes (${vencidos.length})</h3>
+        <div class="tabla" style="border:0"><table class="mini"><tbody>
+        ${vencidos.map((f, i) => `<tr><td>${dm(f.fecha)}<div class="tenue">hace ${diasDesde(f.fecha)} ${diasDesde(f.fecha) === 1 ? "día" : "días"}</div></td>
+          <td>${esc(f.descripcion)}<div class="tenue">${f.monto > 0 ? "Ingreso que no se registró" : "Egreso que no se registró"}</div></td>
+          <td class="num ${f.monto < 0 ? "menos" : "mas"}">${conMoneda(f.monto, f.moneda)}</td>
+          <td>${f.tipo === "vencimiento_tarjeta"
+            ? `<button class="link" data-venc-pagado="${i}" type="button">Ya se pagó</button>`
+            : `<button class="link" data-venc-registrar="${i}" type="button">${f.monto > 0 ? "Ya entró" : "Ya lo pagué"}</button>`}
+            · <button class="link" data-venc-omitir="${i}" type="button">Omitir</button></td></tr>`).join("")}
+        </tbody></table></div>
+        <p class="tenue" style="margin-bottom:0">${[totVenc(1) && `Ingresos pendientes: ${totVenc(1)}`, totVenc(-1) && `Egresos pendientes: ${totVenc(-1)}`].filter(Boolean).join(" · ")}.
+          No entran en el saldo proyectado de abajo. Quedan acá hasta que los registres (se anotan en su cuenta) o los omitas si no se van a cobrar ni pagar.</p></div>` : ""}
       <div class="cifras">
         ${cifra("Disponible hoy en pesos", pesos(inicial), "", "total", detDisp, COMO.dispViene)}
         ${cifra(`Egresos comprometidos (${hz})`, pesos(egresos), "", "", detFlujo((f) => f.monto < 0, "No hay egresos comprometidos."), COMO.egresos)}
@@ -1522,6 +1544,31 @@ async function verViene() {
         monto: f.monto, moneda: f.moneda, descripcion: f.descripcion, cuenta_id: c?.id, rubro_id: k.rubro_id, activo_id: k.activo_id,
         registro: { compromiso_id: f.compromiso_id, fecha: f.fecha, aguinaldo: !!f.aguinaldo },
         alGuardar: (aviso) => verViene().then(() => $("viene-c").insertAdjacentHTML("afterbegin", `<div class="msg ok">${aviso} Ya no figura en lo que viene.</div>`)) });
+    });
+    // Vencidos pendientes: registrar (anota el movimiento), marcar tarjeta pagada u omitir
+    const registrarVencido = async (f, extra, aviso) => {
+      const { error } = await sb.from("compromisos_registrados").insert({ compromiso_id: f.compromiso_id, fecha: f.fecha, aguinaldo: !!f.aguinaldo, ...extra });
+      if (error) return alert(`No se pudo guardar: ${error.message}`);
+      await verViene();
+      $("viene-c").insertAdjacentHTML("afterbegin", `<div class="msg ok">${aviso}</div>`);
+    };
+    $("viene-c").querySelectorAll("[data-venc-registrar]").forEach((b) => b.onclick = () => {
+      const f = vencidos[+b.dataset.vencRegistrar], k = datosK[f.compromiso_id] ?? {};
+      let c = cuentaDe(k.cuenta_id);
+      if (c?.tipo === "tarjeta_credito") c = cuentaPagadora(c);
+      anotarMovimiento({ titulo: `${f.monto > 0 ? "Ya entró" : "Ya lo pagué"}: ${f.descripcion} (vencía el ${dm(f.fecha)})`, signo: f.monto > 0 ? 1 : -1,
+        monto: f.monto, moneda: f.moneda, fecha: f.fecha, descripcion: f.descripcion, cuenta_id: c?.id, rubro_id: k.rubro_id, activo_id: k.activo_id,
+        registro: { compromiso_id: f.compromiso_id, fecha: f.fecha, aguinaldo: !!f.aguinaldo },
+        alGuardar: (aviso) => verViene().then(() => $("viene-c").insertAdjacentHTML("afterbegin", `<div class="msg ok">${aviso} Ya no figura como vencido.</div>`)) });
+    });
+    $("viene-c").querySelectorAll("[data-venc-pagado]").forEach((b) => b.onclick = () => {
+      const f = vencidos[+b.dataset.vencPagado];
+      registrarVencido(f, {}, `${esc(f.descripcion)}: marcado como pagado. El pago se verá cuando importes el resumen de la cuenta.`);
+    });
+    $("viene-c").querySelectorAll("[data-venc-omitir]").forEach((b) => b.onclick = () => {
+      const f = vencidos[+b.dataset.vencOmitir];
+      if (!confirm(`¿Omitir «${f.descripcion}» del ${dm(f.fecha)}? No se cobró ni se pagó y no se va a registrar.`)) return;
+      registrarVencido(f, { omitido: true }, `${esc(f.descripcion)} del ${dm(f.fecha)}: omitido.`);
     });
     $("viene-c").querySelectorAll("[data-editar-fijo]").forEach((b) => b.onclick = () => editarFijo(fijos.find((k) => k.id === +b.dataset.editarFijo)));
     // Flujo por día (hasta 2 meses) o por semana (3 y 6 meses): barras de ingresos y egresos + línea de saldo
