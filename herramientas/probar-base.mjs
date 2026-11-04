@@ -304,3 +304,15 @@ await run(`insert into compromisos_registrados (compromiso_id, fecha, omitido) s
 console.log("V después de omitir el pago:", await vencidosV(), "| omitidos:", (await db.query("select count(*)::int as n from compromisos_registrados where omitido")).rows[0].n);
 await run(`insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima) values ('Deuda vencida grande', 'otro', -999999999, 'ARS', 'unica', current_date - 5)`);
 console.log("V alerta con un vencido impago (avisa hoy):", await liq());
+
+// T) Transferencia avisada por mail a una cuenta propia: anota también la entrada en la cuenta de destino
+await run(`delete from transferencias_internas; delete from movimientos where cuenta_id in (1, 4)`);
+console.log("T aviso a cuenta propia:", await aviso({ message_id: "t1", asunto: "Transferencia", recibido: new Date().toISOString(),
+  aviso: tr({ monto: -3000, comprobante: "555", cbu: "0000003100000000000099", descripcion: "Transferencia a mí" }) }));
+console.log("T movimientos:", (await db.query(`select cuenta_id, monto, origen, id_externo, descripcion_original from movimientos where abs(monto) = 3000 order by id`)).rows,
+  "| vínculo:", (await db.query(`select count(*)::int as n from transferencias_internas where mov_entrada_id is not null`)).rows[0].n);
+await run(`insert into movimientos (cuenta_id, fecha, descripcion_original, monto, moneda, origen, confianza, estado_conciliacion, id_externo)
+  values (4, current_date, 'Entrada anotada', 4000, 'ARS', 'manual', 'confirmado', 'no_aplica', 'manual:t2')`);
+console.log("T con la entrada ya anotada:", (await aviso({ message_id: "t2", asunto: "Transferencia", recibido: new Date().toISOString(),
+  aviso: tr({ monto: -4000, comprobante: "556", cbu: "0000003100000000000099", descripcion: "Transferencia a mí" }) })).estado,
+  (await db.query(`select count(*)::int as n from movimientos where monto = 4000`)).rows[0].n, "entrada(s) de 4000");

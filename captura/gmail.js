@@ -146,7 +146,7 @@ function guardarSinLeer(cfg, token, msg, estado, extra) {
 // Ejecutar a mano para volver a leer los mails desde una fecha (los ya registrados se ignoran).
 // Cambia la fecha de abajo antes de ejecutar.
 function reprocesarDesde() {
-  PropertiesService.getScriptProperties().setProperty("ULTIMO", new Date("2026-10-30T00:00:00Z").toISOString());
+  PropertiesService.getScriptProperties().setProperty("ULTIMO", new Date("2026-11-03T00:00:00Z").toISOString());
   procesarAvisos();
 }
 

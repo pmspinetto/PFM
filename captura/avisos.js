@@ -126,7 +126,29 @@ var Avisos = (function () {
     return null;
   }
 
-  var LECTORES = { "santander.com.ar": santander };
+  // ---------- BBVA ----------
+  // Transferencia inmediata debitada ("AVISO TRANSFERENCIA INMEDIATA DEBITADA"): pares etiqueta-valor
+  // Fecha, Número cuenta ("CA-ARS ***123/4"), CVU/CBU destino, CUIT destino e Importe ("ARS 1.000,00").
+  // El otro aviso de la misma operación ("Realizaste una transferencia") no dice la cuenta de origen:
+  // no se lee (queda como no reconocido) para no duplicar el movimiento.
+  function bbva(t, asunto, recibido) {
+    if (/d[eé]bito de una transferencia/i.test(t) && /N[uú]mero cuenta/i.test(t)) {
+      var cuentaTxt = campo(t, "N[uú]mero cuenta") || "";
+      var impB = importe((campo(t, "Importe") || "").replace(/^\s*ARS/i, "$"));
+      if (!impB) return null;
+      var cbuB = (campo(t, "(?:CVU|CBU) destino") || "").replace(/\D/g, "");
+      var cuit = (campo(t, "CUIT destino") || "").replace(/\D/g, "");
+      return { banco: "BBVA", tipo: "transferencia_enviada", monto: -impB.valor,
+               moneda: /USD|U\$S/i.test(cuentaTxt) ? "USD" : impB.moneda,
+               fecha: fechaISO(campo(t, "Fecha")) || fechaLocal(recibido), hora: null,
+               descripcion: "Transferencia a " + (cuit || "CBU " + cbuB),
+               ultimos4: null, cuenta: (cuentaTxt.match(/(\d[\d\/-]*\d)\s*$/) || [])[1] || null,
+               cuotas: 1, titular: null, destinatario: cuit || null, cbu: cbuB || null, comprobante: null };
+    }
+    return null;
+  }
+
+  var LECTORES = { "santander.com.ar": santander, "bbva.com.ar": bbva };
 
   // Remitente original de un mail reenviado a mano: la primera línea "De:" / "From:" del cuerpo
   // con la dirección de un banco conocido
