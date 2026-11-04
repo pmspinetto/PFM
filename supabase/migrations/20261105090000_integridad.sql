@@ -24,8 +24,8 @@
 --    - gasto grande: solo de los últimos 7 días y no repite lo ya avisado por mail;
 --    - pagos recurrentes: respeta la cuenta, la fecha de fin, los omitidos y no cuenta los sugeridos.
 -- 8. borrar_movimiento(id): borra un movimiento anotado a mano o llegado por mail con todo lo que cuelga de él.
--- 9. Datos: corrige un pago de tarjeta clasificado como gasto, quita un registro de vencimiento sin movimiento
---    con una fecha que no corresponde y marca conciliadas las transferencias de mail ya emparejadas.
+-- 9. Datos: corrige un pago de tarjeta clasificado como gasto y marca conciliadas las transferencias de mail
+--    ya emparejadas.
 -- =====================================================================
 
 -- 1. Hora de Argentina
@@ -999,9 +999,6 @@ begin
     where id in (202, (select mov_salida_id from transferencias_internas where id = v_t));
   end if;
 end $$;
-
--- Registro de un vencimiento sin movimiento, con una fecha que no es de ninguna cuota pagada
-delete from compromisos_registrados where id = 1 and movimiento_id is null and not omitido and fecha = '2027-01-03';
 
 -- Transferencias de mail ya emparejadas que seguían como pendientes
 update movimientos m set estado_conciliacion = 'conciliado'
