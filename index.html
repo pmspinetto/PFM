@@ -307,6 +307,7 @@ async function iniciar() {
   $("app").classList.remove("oculto");
   $("menu").classList.remove("oculto");
   await cargarReferencias();
+  await tipoCambio();   // dólar de referencia para anotar y convertir en dólares desde cualquier pantalla
   await iniciarTableros();
   procesarBandeja().then(() => vistaActual() === "importar" && verBandeja());
 }
@@ -625,6 +626,9 @@ $("btnDescartar").onclick = limpiar;
 async function guardarEstado(est) {
   const resultados = [];
   for (const b of est.bloques) {
+    const alias = ref.cuentas.find((c) => c.id === b.cuenta_id)?.alias;
+    const { data: ya } = await sb.from("documentos").select("id").eq("hash", `${est.hash}-${b.cuenta_id}`).limit(1);
+    if (ya?.length) { resultados.push({ alias, ya_importado: true }); continue; }
     await registrarPlasticos(b);
     const reglas = b.movs.filter((m) => m.recordar && m.rubro_id).map((m) => ({
       patron: patronDesde(m.descripcion), rubro_id: m.rubro_id, activo_id: m.activo_id,
@@ -658,7 +662,7 @@ async function guardarEstado(est) {
   await cargarReferencias();
   return resultados;
 }
-const textoResultados = (resultados) => resultados.map((r) =>
+const textoResultados = (resultados) => resultados.map((r) => r.ya_importado ? `${esc(r.alias)}: ya estaba guardado` :
       `${esc(r.alias)}: ${r.insertados} movimientos guardados` +
       (r.duplicados ? `, ${r.duplicados} ya existían` : "") +
       (r.emparejadas ? `, ${r.emparejadas} transferencias emparejadas` : "") +
@@ -931,14 +935,20 @@ function grafico(id, config) {
 // o si ya pasó el vencimiento (débito automático). Se suman los consumos registrados después del cierre.
 async function deudaTarjetas(ss) {
   const hoy = hoyISO();
-  const [docs, pagos] = await Promise.all([
+  const rubroPago = ref.rubros.find((r) => r.nombre === "Pago de tarjeta" && r.padre_id)?.id ?? -1;
+  const idsTarjetas = [...new Set(ss.filter((s) => s.cuenta?.tipo === "tarjeta_credito").map((s) => s.cuenta.id))];
+  const [docs, pagos, enTarjeta] = await Promise.all([
     sb.from("documentos").select("cuenta_id, periodo_hasta, vencimiento, proximo_cierre, proximo_vencimiento")
       .eq("tipo", "resumen_tarjeta").order("periodo_hasta", { ascending: false }),
     sb.from("transferencias_internas").select("mov:movimientos!mov_salida_id(id, fecha, monto, moneda)")
       .eq("tipo", "pago_tarjeta").is("mov_entrada_id", null),
+    // Pagos ya registrados en la propia tarjeta (anotados o de su resumen): bajan la deuda aunque sean parciales
+    idsTarjetas.length ? sb.from("movimientos").select("cuenta_id, fecha, monto, moneda").eq("rubro_id", rubroPago).gt("monto", 0)
+      .in("cuenta_id", idsTarjetas) : { data: [] },
   ]);
   if (docs.error) throw docs.error;
   if (pagos.error) throw pagos.error;
+  if (enTarjeta.error) throw enTarjeta.error;
   const usados = new Set(), proximos = [];
   const filas = ss.filter((s) => s.cuenta?.tipo === "tarjeta_credito").map((s) => {
     const doc = docs.data.find((d) => d.cuenta_id === s.cuenta.id && d.periodo_hasta <= s.confirmado_al) ?? {};
@@ -960,16 +970,25 @@ async function deudaTarjetas(ss) {
     const pago = resumen < 0 && pagos.data.map((x) => x.mov).find((m) => m && !usados.has(m.id) &&
       m.moneda === s.moneda && m.fecha > s.confirmado_al && Math.abs(Number(m.monto) - resumen) < 0.005);
     if (pago) usados.add(pago.id);
-    const saldado = resumen >= 0 || pago || hoy > vto;
+    // Pagos posteriores al cierre registrados en la tarjeta (ya están dentro de "posteriores")
+    const pagosT = enTarjeta.data.filter((m) => m.cuenta_id === s.cuenta.id && m.moneda === s.moneda && m.fecha > s.confirmado_al);
+    const pagado = pagosT.reduce((a, m) => a + Number(m.monto), 0);
+    const completo = resumen < 0 && pagado >= -resumen - 0.005;
+    const saldado = resumen >= 0 || pago || completo || hoy > vto;
     if (!saldado) proximos.push(vto);
     if (doc.proximo_vencimiento) proximos.push(doc.proximo_vencimiento);
+    const ultimoPago = pagosT.map((m) => m.fecha).sort().pop();
     const estado = resumen >= 0 ? `Resumen al ${dm(s.confirmado_al)} sin deuda${extra}`
       : pago ? `Resumen al ${dm(s.confirmado_al)} pagado el ${dm(pago.fecha)}${extra}`
+      : completo ? `Resumen al ${dm(s.confirmado_al)} pagado el ${dm(ultimoPago)}${extra}`
       : hoy > vto ? `Resumen al ${dm(s.confirmado_al)} vencido el ${dm(vto)}${doc.vencimiento ? "" : " (estimado)"}: se da por pagado${extra}`
-      : `Vence el ${dm(vto)}${doc.vencimiento ? "" : " (estimado)"}${extra}`;
-    // deuda_neta solo descuenta pagos que ya figuran en una cuenta: así el patrimonio no cuenta dos veces
-    return { ...s, saldo_estimado: (saldado ? Math.max(resumen, 0) : resumen) + posteriores, estado,
-             deuda_neta: (resumen >= 0 || pago ? Math.max(resumen, 0) : resumen) + posteriores };
+      : `Vence el ${dm(vto)}${doc.vencimiento ? "" : " (estimado)"}${pagado ? `, ya pagaste ${conMoneda(pagado, s.moneda)}` : ""}${extra}`;
+    // Si el resumen se da por pagado sin ver el pago (débito automático), los pagos registrados en la tarjeta
+    // no vuelven a restarse. deuda_neta solo descuenta pagos que ya figuran en una cuenta (el patrimonio no cuenta dos veces).
+    const vivo = resumen + posteriores;
+    return { ...s, estado,
+             saldo_estimado: pago ? Math.max(resumen, 0) + posteriores : completo || !saldado ? vivo : Math.max(resumen, 0) + posteriores - pagado,
+             deuda_neta: pago ? Math.max(resumen, 0) + posteriores : vivo };
   });
   const prox = proximos.sort()[0];
   const nota = prox ? `Lo que falta pagar. Próximo vencimiento: ${dm(prox)}` : "Lo que falta pagar de los últimos resúmenes";
@@ -1295,7 +1314,7 @@ async function detalleGastos(lineas) {
     const { data: c, error: e1 } = await sb.from("compras").insert({ descripcion: nombre.trim(),
       fecha: elegidos.map((g) => g.fecha).sort()[0], rubro_id: elegidos[0].rubro_id, es_extraordinario: true }).select().single();
     if (e1) return ($("msgAgrupar").textContent = e1.message);
-    const { error: e2 } = await sb.from("movimientos").update({ compra_id: c.id }).in("id", ids);
+    const { error: e2 } = await sb.from("movimientos").update({ compra_id: c.id, es_extraordinario: true }).in("id", ids);
     if (e2) return ($("msgAgrupar").textContent = e2.message);
     verMes();
   };
@@ -1333,11 +1352,22 @@ function anotarMovimiento(op = {}) {
       <div class="acciones"><button id="amGuardar" type="button">Anotar</button><span id="amMsg" class="tenue"></span></div>
     </div>
     <p class="tenue">Queda como anotado a mano. Cuando importes el resumen de esa cuenta, si trae un movimiento del mismo importe con fecha a 5 días o menos, lo reemplaza; si no lo trae, queda en Pendientes para revisar.</p>`);
-  // La moneda se elige solo en cuentas bimoneda
+  // La moneda se elige solo en cuentas bimoneda. Si lo que se paga está en otra moneda que la cuenta
+  // (por ejemplo, un vencimiento en dólares desde una cuenta en pesos), el monto se convierte al dólar de referencia.
   const verMoneda = () => {
     const c = cuentaDe(+$("amCuenta").value);
     if (c && c.moneda !== "BIMONEDA") $("amMoneda").value = c.moneda;
     $("detCuerpo").querySelector(".am-mon").classList.toggle("oculto", !!c && c.moneda !== "BIMONEDA");
+    if (op.monto && op.moneda && c && c.moneda !== "BIMONEDA") {
+      const mon = $("amMoneda").value, base = Math.abs(op.monto);
+      if (mon !== op.moneda && tc?.valor) {
+        const v = mon === "ARS" ? base * tc.valor : base / tc.valor;
+        $("amMonto").value = fmt.format(Math.round(v * 100) / 100);
+        $("amMsg").textContent = `Es de ${conMoneda(base, op.moneda)}: lo pasé a ${mon === "ARS" ? "pesos" : "dólares"} al dólar de referencia (${pesos(tc.valor)}). Corrígelo si pagaste otro importe.`;
+      } else if (mon !== op.moneda) {
+        $("amMsg").textContent = `Es de ${conMoneda(base, op.moneda)} y la cuenta es en ${mon === "ARS" ? "pesos" : "dólares"}: escribe el importe en ${mon === "ARS" ? "pesos" : "dólares"}.`;
+      } else { $("amMonto").value = fmt.format(base); $("amMsg").textContent = ""; }
+    }
   };
   $("amCuenta").onchange = verMoneda; verMoneda();
   // Entre mis cuentas: cuenta de origen y de destino (otra cuenta o una tarjeta), sin rubro (es neutro)
@@ -1367,14 +1397,14 @@ function anotarMovimiento(op = {}) {
     if (error) { $("amGuardar").disabled = false; return ($("amMsg").innerHTML = `<span class="menos">No se pudo anotar: ${esc(error.message)}</span>`); }
     if (op.registro) {
       const { error: e2 } = await sb.from("compromisos_registrados").insert({ ...op.registro, movimiento_id: data.id });
-      if (e2) { $("amGuardar").disabled = false; return ($("amMsg").innerHTML = `<span class="menos">Se anotó el movimiento, pero no se pudo sacar de lo que viene: ${esc(e2.message)}</span>`); }
+      if (e2) return ($("amMsg").innerHTML = `<span class="menos">Se anotó el movimiento, pero no se pudo sacar de lo que viene: ${esc(e2.message)}. No lo anotes de nuevo: cierra esta ventana y usa "Omitir" en ese vencimiento.</span>`);
     }
     // El saldo parte del último saldo conocido: lo anotado con fecha anterior o igual no lo cambia
-    const { data: sv } = await sb.from("v_saldo_vivo").select("confirmado_al").eq("cuenta_id", c.id).eq("moneda", moneda);
-    const base = sv?.[0]?.confirmado_al;
+    const { data: sv } = await sb.from("v_saldo_vivo").select("confirmado_al, fuente").eq("cuenta_id", c.id).eq("moneda", moneda);
+    const base = sv?.[0]?.confirmado_al, antes = base && (fecha < base || (fecha === base && sv[0].fuente === "resumen"));
     $("detalle").close();
-    const aviso = `${sg < 0 ? "Gasto" : "Ingreso"} de ${conMoneda(Math.abs(n), moneda)} del ${dm(fecha)} anotado en ${esc(c.alias)}.${base && fecha <= base
-      ? ` Es anterior o igual al último saldo conocido (${dm(base)}), así que no cambia el saldo de la cuenta; sí cuenta en El mes.` : ""}`;
+    const aviso = `${sg < 0 ? "Gasto" : "Ingreso"} de ${conMoneda(Math.abs(n), moneda)} del ${dm(fecha)} anotado en ${esc(c.alias)}.${antes
+      ? ` Es anterior al último saldo conocido (${dm(base)}), así que no cambia el saldo de la cuenta; sí cuenta en El mes.` : ""}`;
     await op.alGuardar?.(aviso);
   };
 }
@@ -1420,19 +1450,40 @@ async function anotarTransferencia(desde, hacia, monto, moneda, fecha, op) {
 async function anotarPagoTarjeta(desde, tarjeta, monto, moneda, fecha, op) {
   if (!(await noDuplica(desde, moneda, -monto, fecha))) return;
   $("amGuardar").disabled = true;
-  const { data, error } = await sb.from("movimientos").insert({
-    cuenta_id: desde.id, fecha, moneda, monto: -monto, tipo_cambio: moneda === "USD" ? tc?.valor ?? null : null,
-    descripcion_original: $("amDesc").value.trim() || `Pago de ${tarjeta.alias}`,
-    rubro_id: ref.rubros.find((r) => r.nombre === "Pago de tarjeta" && r.padre_id)?.id ?? null, persona_id: desde.persona_id ?? null,
-    origen: "manual", confianza: "confirmado", estado_conciliacion: "no_aplica", id_externo: "manual:" + crypto.randomUUID(),
-  }).select("id").single();
+  const rubro = ref.rubros.find((r) => r.nombre === "Pago de tarjeta" && r.padre_id)?.id ?? null;
+  const mov = (c, signo, texto) => ({
+    cuenta_id: c.id, fecha, moneda, monto: signo * monto, tipo_cambio: moneda === "USD" ? tc?.valor ?? null : null,
+    descripcion_original: $("amDesc").value.trim() || texto, rubro_id: rubro, persona_id: desde.persona_id ?? null,
+    origen: "manual", confianza: "confirmado", estado_conciliacion: "conciliado", id_externo: "manual:" + crypto.randomUUID(),
+  });
+  // Las dos puntas: baja el saldo de la cuenta y baja la deuda de la tarjeta (también si el pago es parcial).
+  // Cuando lleguen los resúmenes del banco y de la tarjeta, cada uno reemplaza su punta y el vínculo se mantiene.
+  const { data, error } = await sb.from("movimientos")
+    .insert([mov(desde, -1, `Pago de ${tarjeta.alias}`), mov(tarjeta, 1, `Pago desde ${desde.alias}`)]).select("id, monto");
   if (error) { $("amGuardar").disabled = false; return ($("amMsg").innerHTML = `<span class="menos">No se pudo anotar: ${esc(error.message)}</span>`); }
+  const sal = data.find((m) => m.monto < 0), ent = data.find((m) => m.monto > 0);
+  // El vencimiento que cancela: el elegido ("Ya se pagó") o el próximo de esa tarjeta que este pago cubre
+  let registro = op.registro;
+  if (!registro) {
+    const ks = (await sb.from("compromisos").select("id").eq("cuenta_id", tarjeta.id).eq("tipo", "vencimiento_tarjeta").eq("activo", true)).data ?? [];
+    const fs = ks.length ? (await sb.from("v_flujo_proyectado").select("compromiso_id, fecha, monto, moneda, aguinaldo")
+      .in("compromiso_id", ks.map((k) => k.id)).gte("fecha", sumarDias(fecha, -40)).order("fecha")).data ?? [] : [];
+    // Cuenta lo pagado a esa tarjeta en el último mes (incluido este pago): varios pagos parciales también lo cancelan
+    const rubroPago = ref.rubros.find((r) => r.nombre === "Pago de tarjeta" && r.padre_id)?.id ?? -1;
+    const f = fs.find((x) => x.moneda === moneda && x.monto < 0);
+    if (f) {
+      const { data: pagos } = await sb.from("movimientos").select("monto").eq("cuenta_id", tarjeta.id).eq("moneda", moneda)
+        .eq("rubro_id", rubroPago).gt("monto", 0).gte("fecha", sumarDias(f.fecha, -30));
+      if ((pagos ?? []).reduce((a, m) => a + Number(m.monto), 0) >= Math.abs(f.monto) - 1)
+        registro = { compromiso_id: f.compromiso_id, fecha: f.fecha, aguinaldo: !!f.aguinaldo };
+    }
+  }
   const errores = [
-    (await sb.from("transferencias_internas").insert({ mov_salida_id: data.id, mov_entrada_id: null, tipo: "pago_tarjeta" })).error,
-    op.registro ? (await sb.from("compromisos_registrados").insert({ ...op.registro, movimiento_id: data.id })).error : null,
+    (await sb.from("transferencias_internas").insert({ mov_salida_id: sal.id, mov_entrada_id: ent.id, tipo: "pago_tarjeta" })).error,
+    registro ? (await sb.from("compromisos_registrados").insert({ ...registro, movimiento_id: sal.id })).error : null,
   ].filter(Boolean);
   $("detalle").close();
-  await op.alGuardar?.(`Pago de ${esc(tarjeta.alias)} de ${conMoneda(monto, moneda)} del ${dm(fecha)} anotado en ${esc(desde.alias)}.${errores.length
+  await op.alGuardar?.(`Pago de ${esc(tarjeta.alias)} de ${conMoneda(monto, moneda)} del ${dm(fecha)} anotado desde ${esc(desde.alias)}.${errores.length
     ? ` Ojo: ${errores.map((e) => esc(e.message)).join("; ")}.` : ""}`);
 }
 
@@ -1544,7 +1595,8 @@ async function verViene() {
         ${filas.map((f, i) => { if (f.vencio) return ""; const kk = !f.aguinaldo && fijos.find((x) => x.id === f.compromiso_id), nc = kk && cuotasDe(kk);
           return `<tr><td>${dm(f.fecha)}</td><td>${esc(f.descripcion)}${nc ? ` <span class="chip">cuota ${cuotaNro(kk, f.fecha)} de ${nc}</span>` : ""}${f.indexacion !== "ninguna" ? ` <span class="tenue">(${f.indexacion === "uva" ? "ajusta por UVA" : f.indexacion === "ipc" ? "ajustado por IPC, estimado" : "estimado"})</span>` : ""}</td>
           <td class="num ${f.monto < 0 ? "menos" : "mas"}">${pesos(f.monto)}</td><td class="num tenue">${pesos(f.saldo)}</td>
-          <td>${f.tipo === "vencimiento_tarjeta" ? "" : `<button class="link" data-registrar="${i}" type="button">${f.monto > 0 ? "Ya entró" : "Ya lo pagué"}</button>`}</td></tr>`; }).join("") ||
+          <td>${f.tipo === "vencimiento_tarjeta" ? (f.monto < 0 ? `<button class="link" data-pagar-tarjeta="${i}" type="button">Ya se pagó</button>` : "")
+            : `<button class="link" data-registrar="${i}" type="button">${f.monto > 0 ? "Ya entró" : "Ya lo pagué"}</button>`}</td></tr>`; }).join("") ||
           `<tr><td class="tenue">No hay compromisos cargados en ${hz === "1 semana" ? "la próxima semana" : `los próximos ${hz}`}.</td></tr>`}
       </tbody></table></div>
       <p class="tenue">Incluye hipoteca, alquiler, seguros y expensas cargados como compromisos, el vencimiento de cada resumen de tarjeta importado y las cuotas que quedan de cada compra en cuotas (estimado: los consumos nuevos se suman cuando cierra cada resumen). Con «Ya entró» o «Ya lo pagué» lo anotas en su cuenta sin esperar el resumen y sale de esta lista.</p></div>
@@ -1570,8 +1622,7 @@ async function verViene() {
     const datosK = Object.fromEntries(kq.data.map((k) => [k.id, k]));
     $("viene-c").querySelectorAll("[data-registrar]").forEach((b) => b.onclick = () => {
       const f = filas[+b.dataset.registrar], k = datosK[f.compromiso_id] ?? {};
-      let c = cuentaDe(k.cuenta_id);
-      if (c?.tipo === "tarjeta_credito") c = cuentaPagadora(c);
+      const c = cuentaDe(k.cuenta_id);   // si se cobra con tarjeta, va a la tarjeta: su resumen lo confirma
       anotarMovimiento({ titulo: `${f.monto > 0 ? "Ya entró" : "Ya lo pagué"}: ${f.descripcion}`, signo: f.monto > 0 ? 1 : -1,
         monto: f.monto, moneda: f.moneda, descripcion: f.descripcion, cuenta_id: c?.id, rubro_id: k.rubro_id, activo_id: k.activo_id,
         registro: { compromiso_id: f.compromiso_id, fecha: f.fecha, aguinaldo: !!f.aguinaldo },
@@ -1586,21 +1637,22 @@ async function verViene() {
     };
     $("viene-c").querySelectorAll("[data-venc-registrar]").forEach((b) => b.onclick = () => {
       const f = vencidos[+b.dataset.vencRegistrar], k = datosK[f.compromiso_id] ?? {};
-      let c = cuentaDe(k.cuenta_id);
-      if (c?.tipo === "tarjeta_credito") c = cuentaPagadora(c);
+      const c = cuentaDe(k.cuenta_id);   // si se cobra con tarjeta, va a la tarjeta: su resumen lo confirma
       anotarMovimiento({ titulo: `${f.monto > 0 ? "Ya entró" : "Ya lo pagué"}: ${f.descripcion} (vencía el ${dm(f.fecha)})`, signo: f.monto > 0 ? 1 : -1,
         monto: f.monto, moneda: f.moneda, fecha: f.fecha, descripcion: f.descripcion, cuenta_id: c?.id, rubro_id: k.rubro_id, activo_id: k.activo_id,
         registro: { compromiso_id: f.compromiso_id, fecha: f.fecha, aguinaldo: !!f.aguinaldo },
         alGuardar: (aviso) => verViene().then(() => $("viene-c").insertAdjacentHTML("afterbegin", `<div class="msg ok">${aviso} Ya no figura como vencido.</div>`)) });
     });
     // Vencimiento de tarjeta: anota el pago desde la cuenta que la paga (se puede cambiar cuenta, monto y fecha)
-    $("viene-c").querySelectorAll("[data-venc-pagado]").forEach((b) => b.onclick = () => {
-      const f = vencidos[+b.dataset.vencPagado], tarjeta = cuentaDe(datosK[f.compromiso_id]?.cuenta_id);
-      anotarMovimiento({ titulo: `Ya se pagó: ${f.descripcion} (vencía el ${dm(f.fecha)})`, signo: 0,
-        cuenta_id: tarjeta ? cuentaPagadora(tarjeta)?.id : null, hacia_id: tarjeta?.id, monto: f.monto, moneda: f.moneda, fecha: f.fecha,
-        registro: { compromiso_id: f.compromiso_id, fecha: f.fecha, aguinaldo: !!f.aguinaldo },
-        alGuardar: (aviso) => verViene().then(() => $("viene-c").insertAdjacentHTML("afterbegin", `<div class="msg ok">${aviso} Ya no figura como vencido.</div>`)) });
-    });
+    const pagarTarjeta = (f, vencido) => {
+      const tarjeta = cuentaDe(datosK[f.compromiso_id]?.cuenta_id);
+      anotarMovimiento({ titulo: `Ya se pagó: ${f.descripcion}${vencido ? ` (vencía el ${dm(f.fecha)})` : ""}`, signo: 0,
+        cuenta_id: tarjeta ? cuentaPagadora(tarjeta)?.id : null, hacia_id: tarjeta?.id, monto: f.monto, moneda: f.moneda,
+        fecha: vencido ? f.fecha : hoyISO(), registro: { compromiso_id: f.compromiso_id, fecha: f.vencio ?? f.fecha, aguinaldo: !!f.aguinaldo },
+        alGuardar: (aviso) => verViene().then(() => $("viene-c").insertAdjacentHTML("afterbegin", `<div class="msg ok">${aviso} Ya no figura en lo que viene.</div>`)) });
+    };
+    $("viene-c").querySelectorAll("[data-venc-pagado]").forEach((b) => b.onclick = () => pagarTarjeta(vencidos[+b.dataset.vencPagado], true));
+    $("viene-c").querySelectorAll("[data-pagar-tarjeta]").forEach((b) => b.onclick = () => pagarTarjeta(filas[+b.dataset.pagarTarjeta], false));
     $("viene-c").querySelectorAll("[data-venc-omitir]").forEach((b) => b.onclick = () => {
       const f = vencidos[+b.dataset.vencOmitir];
       if (!confirm(`¿Omitir «${f.descripcion}» del ${dm(f.fecha)}? No se cobró ni se pagó y no se va a registrar.`)) return;
@@ -1787,8 +1839,17 @@ function editarFijo(k) {
       ajuste_cada: $("fjIdx").value === "ipc" ? Math.min(12, Math.max(1, parseInt($("fjCada").value, 10) || 3)) : null,
       ultimo_ajuste: $("fjIdx").value === "ipc" ? ($("fjUlt").value || hoyISO().slice(0, 7)) + "-01" : null,
       aguinaldo: sg > 0 && frec === "mensual" && $("fjAgui").value ? +$("fjAgui").value : null };
-    const { error } = nuevo ? await sb.from("compromisos").insert(datos) : await sb.from("compromisos").update(datos).eq("id", k.id);
+    const cambioFecha = nuevo || fecha !== k.fecha_proxima;
+    const { data: guardado, error } = nuevo ? await sb.from("compromisos").insert(datos).select("id").single()
+      : await sb.from("compromisos").update(datos).eq("id", k.id).select("id").single();
     if (error) return ($("fjMsg").textContent = error.message);
+    // Si la primera fecha quedó antes de hoy, esas ocurrencias aparecerían como vencidas: se pregunta si ya pasaron
+    if (cambioFecha && fecha < hoyISO()) {
+      const { data: pasadas } = await sb.from("v_flujo_proyectado").select("compromiso_id, fecha, aguinaldo")
+        .eq("compromiso_id", guardado.id).lt("fecha", hoyISO());
+      if (pasadas?.length && confirm(`Quedan ${pasadas.length} fecha${pasadas.length > 1 ? "s" : ""} anterior${pasadas.length > 1 ? "es" : ""} a hoy (${pasadas.map((x) => dm(x.fecha)).join(", ")}). ¿Ya se cobraron o pagaron, o no corresponden?\n\nAceptar: no mostrarlas como vencidas.\nCancelar: quedan como vencidos pendientes.`))
+        await sb.from("compromisos_registrados").insert(pasadas.map((x) => ({ compromiso_id: x.compromiso_id, fecha: x.fecha, aguinaldo: !!x.aguinaldo, omitido: true })));
+    }
     $("detalle").close(); verViene();
   };
   if (!nuevo) $("fjBorrar").onclick = async () => {
@@ -2049,8 +2110,11 @@ function editarActivo(a) {
     $("detalle").close(); await cargarReferencias(); verPatrimonio();
   };
   $("eaBorrar").onclick = async () => {
-    if (!confirm(`¿Dar de baja "${a.nombre}"? Se borran también sus valuaciones.`)) return;
-    await sb.from("compromisos").delete().eq("activo_id", a.id).eq("tipo", "otro");
+    if (!confirm(`¿Dar de baja "${a.nombre}"? Se borran también sus valuaciones y sus ingresos y gastos fijos.`)) return;
+    // Primero se comprueba que se pueda: si tiene movimientos, reglas o un préstamo no se toca nada
+    const usos = await Promise.all(["movimientos", "reglas", "prestamos"].map((t) => sb.from(t).select("id").eq("activo_id", a.id).limit(1)));
+    if (usos.some((u) => u.data?.length)) return ($("eaMsg").textContent = "Tiene movimientos, reglas o un préstamo asociados: no se puede borrar. Puedes renombrarlo (por ejemplo, agregando \"(vendido)\").");
+    await sb.from("compromisos").delete().eq("activo_id", a.id);
     const { error } = await sb.from("activos").delete().eq("id", a.id);
     if (error) return ($("eaMsg").textContent = /foreign key|violates/i.test(error.message)
       ? "Tiene movimientos, reglas o un préstamo asociados: no se puede borrar. Puedes renombrarlo (por ejemplo, agregando \"(vendido)\")." : error.message);
@@ -2088,7 +2152,7 @@ async function verPendientes() {
     const sinId = ref.rubros.find((r) => r.nombre === "Sin identificar")?.id;
     const internos = ref.rubros.filter((r) => ["Transferencia interna", "Pago de tarjeta", "Movimiento de efectivo"].includes(r.nombre)).map((r) => r.id);
     const MOV = "id, fecha, monto, moneda, descripcion_original, cuenta_id";
-    const [revisar, transitoQ, internasPend, sinCuenta, paresQ] = await Promise.all([
+    const [revisar, transitoQ, internasPend, sinCuenta, paresQ, anotadosQ] = await Promise.all([
       sb.from("movimientos").select("id, fecha, descripcion_original, monto, moneda, cuenta_id, rubro_id, confianza, origen, notas")
         .or(`rubro_id.is.null,rubro_id.eq.${sinId},confianza.in.(sugerido,probable)`).order("fecha", { ascending: false }).limit(200),
       sb.from("transferencias_internas").select(`tipo, mov:movimientos!mov_salida_id(${MOV})`).is("mov_entrada_id", null),
@@ -2097,8 +2161,12 @@ async function verPendientes() {
       sb.from("avisos").select("id, recibido, banco, datos").eq("estado", "sin_cuenta").order("recibido", { ascending: false }),
       sb.from("transferencias_internas").select(`id, tipo, s:movimientos!mov_salida_id(${MOV}), e:movimientos!mov_entrada_id(${MOV})`)
         .not("mov_entrada_id", "is", null).order("id", { ascending: false }).limit(15),
+      // Anotados a mano y llegados por mail de los últimos 60 días: se pueden borrar si están mal o duplicados
+      sb.from("movimientos").select("id, fecha, descripcion_original, monto, moneda, cuenta_id, rubro_id, origen")
+        .or("origen.eq.mail,id_externo.like.manual:*").not("id_externo", "like", "%:entrada")
+        .gte("fecha", sumarDias(hoyISO(), -60)).order("fecha", { ascending: false }).order("id", { ascending: false }).limit(100),
     ]);
-    const err = [revisar, transitoQ, internasPend, sinCuenta, paresQ].find((r) => r.error);
+    const err = [revisar, transitoQ, internasPend, sinCuenta, paresQ, anotadosQ].find((r) => r.error);
     if (err) throw err.error;
     const transito = { data: transitoQ.data.map((t) => t.mov).filter(Boolean).sort((a, b) => a.fecha.localeCompare(b.fecha)) };
     const parte = (m) => `${dm(m.fecha)} ${esc(cuentaDe(m.cuenta_id)?.alias)} ${conMoneda(m.monto, m.moneda)}`;
@@ -2115,7 +2183,7 @@ async function verPendientes() {
           <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td>
           <td><select aria-label="Rubro">${opcionesRubro(m.rubro_id)}</select></td>
           <td style="white-space:nowrap"><button class="sec" data-confirmar type="button">Confirmar</button>
-            ${m.origen === "mail" ? `<button class="sec" data-borrar-mail type="button" title="Borra este movimiento si el aviso no corresponde">Descartar</button>` : ""}</td></tr>`).join("") ||
+            ${m.origen === "mail" ? `<button class="sec" data-borrar-mov="${m.id}" type="button" title="Borra este movimiento si el aviso no corresponde">Descartar</button>` : ""}</td></tr>`).join("") ||
           `<tr><td class="tenue">No hay nada para revisar.</td></tr>`}
       </tbody></table></div></div>
       ${sinCuenta.data.length ? `<div class="panel"><h3>Avisos por mail sin cuenta</h3>
@@ -2134,6 +2202,13 @@ async function verPendientes() {
         </tbody></table></div>
       </div>
       <div class="barra-filtros"><button id="btnEmparejar" type="button">Emparejar</button><span id="msgPar" class="tenue"></span></div>
+      <div class="panel" id="pAnotados"><h3>Anotados a mano y llegados por mail (últimos 60 días)</h3>
+        <p class="tenue" style="margin-top:0">Hasta que llega el resumen de la cuenta son provisorios. Si alguno está repetido o mal cargado, bórralo: se borra también lo que cuelga de él (la otra punta de una transferencia anotada o la entrada creada por un aviso) y, si pagaba un vencimiento, ese vencimiento vuelve a lo que viene.</p>
+        <div class="tabla" style="border:0"><table class="mini"><tbody>
+        ${anotadosQ.data.map((m) => `<tr><td>${dm(m.fecha)}</td><td>${esc(m.descripcion_original)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${esc(rubroDe(m.rubro_id)?.nombre ?? "Sin clasificar")} · ${m.origen === "mail" ? "por mail" : "anotado a mano"}</div></td>
+          <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td>
+          <td><button class="sec" data-borrar-mov="${m.id}" type="button">Borrar</button></td></tr>`).join("") || `<tr><td class="tenue">No hay movimientos anotados ni por mail en los últimos 60 días.</td></tr>`}
+      </tbody></table></div></div>
       <div class="panel"><h3>Últimos emparejamientos</h3><table class="mini"><tbody>
         ${paresQ.data.filter((x) => x.s && x.e).map((x) => `<tr data-s="${x.s.id}" data-e="${x.e.id}"><td>${parte(x.s)}<div class="tenue">${esc(x.s.descripcion_original)}</div></td>
           <td>→ ${parte(x.e)}<div class="tenue">${esc(x.e.descripcion_original)}</div></td>
@@ -2154,13 +2229,11 @@ async function verPendientes() {
       if (error) return alert(error.message);
       verPendientes();
     });
-    $("pend-c").querySelectorAll("[data-borrar-mail]").forEach((b) => b.onclick = async () => {
-      const tr = b.closest("tr");
-      if (!confirm("¿Descartar este movimiento que llegó por mail? Se borra y el aviso queda como descartado.")) return;
-      await sb.from("avisos").update({ estado: "descartado" }).eq("movimiento_id", +tr.dataset.id);
-      const { error } = await sb.from("movimientos").delete().eq("id", +tr.dataset.id).eq("origen", "mail");
+    $("pend-c").querySelectorAll("[data-borrar-mov]").forEach((b) => b.onclick = async () => {
+      if (!confirm("¿Borrar este movimiento? También se borra lo que cuelga de él (la otra punta de una transferencia anotada o la entrada creada por un aviso), el aviso queda descartado y, si pagaba un vencimiento, vuelve a lo que viene.")) return;
+      const { error } = await sb.rpc("borrar_movimiento", { p_id: +b.dataset.borrarMov });
       if (error) return alert(error.message);
-      tr.remove();
+      verPendientes();
     });
 
     $("pend-c").querySelectorAll("[data-descartar]").forEach((b) => b.onclick = async () => {
@@ -2172,9 +2245,20 @@ async function verPendientes() {
     $("pend-c").querySelectorAll("[data-confirmar]").forEach((b) => b.onclick = async () => {
       const tr = b.closest("tr"), rubro = tr.querySelector("select").value;
       if (!rubro) return alert("Elige un rubro primero.");
-      const { error } = await sb.from("movimientos").update({ rubro_id: +rubro, confianza: "confirmado" }).eq("id", +tr.dataset.id);
+      const id = +tr.dataset.id, m = revisar.data.find((x) => x.id === id);
+      const { error } = await sb.from("movimientos").update({ rubro_id: +rubro, confianza: "confirmado" }).eq("id", id);
       if (error) return alert(error.message);
-      tr.remove();
+      // Rubro interno (transferencia, pago de tarjeta, efectivo): la salida queda esperando su contraparte;
+      // si deja de serlo, se quita de las transferencias
+      const nombre = rubroDe(+rubro)?.nombre;
+      if (internos.includes(+rubro) && m.monto < 0) {
+        const { data: ya } = await sb.from("transferencias_internas").select("id").eq("mov_salida_id", id).limit(1);
+        if (!ya?.length) await sb.from("transferencias_internas").insert({ mov_salida_id: id, mov_entrada_id: null,
+          tipo: nombre === "Pago de tarjeta" ? "pago_tarjeta" : nombre === "Movimiento de efectivo" ? "efectivo" : "transferencia" });
+      } else if (!internos.includes(+rubro)) {
+        await sb.from("transferencias_internas").delete().or(`mov_salida_id.eq.${id},mov_entrada_id.eq.${id}`);
+      }
+      verPendientes();
     });
   } catch (e) { $("pend-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
 }
@@ -2247,7 +2331,7 @@ async function verEfectivo(aviso = "") {
       if (!$("efRubro").value) return ($("efMsg").textContent = "Elige un rubro.");
       const val = (id) => ($(id).value ? +$(id).value : null), fecha = $("efFecha").value || hoyISO();
       const { error } = await sb.from("movimientos").insert({
-        cuenta_id: caja.id, fecha, moneda: caja.moneda, monto: signo * Math.abs(n),
+        cuenta_id: caja.id, fecha, moneda: caja.moneda, monto: signo * Math.abs(n), tipo_cambio: caja.moneda === "USD" ? tc?.valor ?? null : null,
         descripcion_original: $("efDesc").value.trim() || (signo < 0 ? "Gasto en efectivo" : "Ingreso en efectivo"),
         rubro_id: val("efRubro"), persona_id: val("efQuien"), beneficiario_id: val("efPara"), activo_id: val("efActivo"),
         origen: "manual", confianza: "confirmado", estado_conciliacion: "no_aplica", id_externo: "manual:" + crypto.randomUUID(),
@@ -2255,11 +2339,11 @@ async function verEfectivo(aviso = "") {
       if (error) return ($("efMsg").innerHTML = `<span class="menos">No se pudo anotar: ${esc(error.message)}</span>`);
       // El saldo de la caja parte del último arqueo: lo anotado antes de esa fecha queda en el historial y en los
       // análisis, pero no cambia el saldo (ya estaba incluido en lo que se contó)
-      const base = ss.find((x) => x.cuenta_id === caja.id);
+      const base = ss.find((x) => x.cuenta_id === caja.id), antes = base && fecha < base.confirmado_al;
       const que = `${signo < 0 ? "Gasto" : "Ingreso"} de ${conMoneda(Math.abs(n), caja.moneda)} del ${dm(fecha)} anotado en ${esc(caja.alias)}.`;
-      verEfectivo(`<div class="msg ${base && fecha <= base.confirmado_al ? "info" : "ok"}">${que}${
+      verEfectivo(`<div class="msg ${antes ? "info" : "ok"}">${que}${
         !base ? " La caja todavía no tiene arqueo: el saldo se va a ver cuando hagas el primero."
-        : fecha <= base.confirmado_al ? ` Es anterior o igual al último arqueo (${dm(base.confirmado_al)}), así que no cambia el saldo de la caja: ya estaba incluido en lo que contaste. Sí cuenta en El mes y en los análisis.` : ""}</div>`);
+        : antes ? ` Es anterior al último arqueo (${dm(base.confirmado_al)}), así que no cambia el saldo de la caja: ya estaba incluido en lo que contaste. Sí cuenta en El mes y en los análisis.` : ""}</div>`);
     };
     $("arGuardar").onclick = async () => {
       const n = numeroAR($("arMonto").value);
@@ -2275,6 +2359,8 @@ async function verEfectivo(aviso = "") {
 }
 
 // ---------------- RUBROS Y REGLAS ----------------
+// Rubros que el sistema busca por nombre (importador, avisos, transferencias, Hoy): no se pueden renombrar ni mover
+const RUBROS_SISTEMA = ["Transferencia interna", "Pago de tarjeta", "Movimiento de efectivo", "Sin identificar", "Efectivo no identificado"];
 function verRubros() {
   const grupos = ref.rubros.filter((r) => !r.padre_id);
   const opcGrupos = (sel) => grupos.map((g) => `<option value="${g.id}" ${g.id === sel ? "selected" : ""}>${esc(g.nombre)}</option>`).join("");
@@ -2292,8 +2378,8 @@ function verRubros() {
           <input type="text" value="${esc(g.nombre)}" data-nombre="${g.id}" aria-label="Nombre del grupo" style="font-weight:600">
           <button class="sec" data-guardar-rubro="${g.id}" type="button">Renombrar</button></div>
         <table class="mini"><tbody>${ref.rubros.filter((r) => r.padre_id === g.id).map((r) => `
-          <tr class="${r.activo === false ? "tenue" : ""}"><td><input type="text" value="${esc(r.nombre)}" data-nombre="${r.id}" aria-label="Nombre del rubro"></td>
-            <td><select data-grupo="${r.id}" aria-label="Grupo">${opcGrupos(g.id)}</select></td>
+          <tr class="${r.activo === false ? "tenue" : ""}"><td><input type="text" value="${esc(r.nombre)}" data-nombre="${r.id}" aria-label="Nombre del rubro"${RUBROS_SISTEMA.includes(r.nombre) ? ` disabled title="Lo usa el sistema: no se puede renombrar"` : ""}></td>
+            <td><select data-grupo="${r.id}" aria-label="Grupo"${RUBROS_SISTEMA.includes(r.nombre) ? ` disabled title="Lo usa el sistema: no se puede mover"` : ""}>${opcGrupos(g.id)}</select></td>
             <td><label class="filtro" style="margin:0"><input type="checkbox" data-activo="${r.id}" ${r.activo !== false ? "checked" : ""}> Activo</label></td>
             <td><button class="sec" data-guardar-rubro="${r.id}" type="button">Guardar</button></td></tr>`).join("")}
         </tbody></table></div>`).join("")}</div>`).join("")}</div>
@@ -2323,10 +2409,10 @@ function verRubros() {
   };
   $("rub-c").querySelectorAll("[data-guardar-rubro]").forEach((b) => b.onclick = async () => {
     const id = +b.dataset.guardarRubro, r = rubroDe(id);
-    const cambios = { nombre: $("rub-c").querySelector(`[data-nombre="${id}"]`).value.trim() };
+    const cambios = { nombre: RUBROS_SISTEMA.includes(r.nombre) ? r.nombre : $("rub-c").querySelector(`[data-nombre="${id}"]`).value.trim() };
     if (!cambios.nombre) return alert("El nombre no puede quedar vacío.");
     const sel = $("rub-c").querySelector(`[data-grupo="${id}"]`), act = $("rub-c").querySelector(`[data-activo="${id}"]`);
-    if (sel && +sel.value !== r.padre_id) { cambios.padre_id = +sel.value; cambios.tipo = rubroDe(+sel.value).tipo; }
+    if (sel && !RUBROS_SISTEMA.includes(r.nombre) && +sel.value !== r.padre_id) { cambios.padre_id = +sel.value; cambios.tipo = rubroDe(+sel.value).tipo; }
     if (act) cambios.activo = act.checked;
     const { error } = await sb.from("rubros").update(cambios).eq("id", id);
     if (error) return alert(error.message.includes("duplicate") ? "Ya hay un rubro con ese nombre en el grupo." : error.message);

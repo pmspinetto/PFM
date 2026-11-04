@@ -331,3 +331,30 @@ console.log("G2 gastos grandes:", (await db.query(`select titulo from alertas_ca
 console.log("S sospechoso:", (await aviso({ message_id: "s1", asunto: "Transferencia", estado: "sospechoso", datos: { motivo: "x" } })).estado,
   "| verificado después:", (await aviso({ message_id: "s1", asunto: "Transferencia", recibido: new Date().toISOString(),
     aviso: tr({ monto: -7000, comprobante: "777000", descripcion: "Transferencia a otro" }) })).estado);
+
+// I) Integridad: el resumen registra los fijos que paga, conserva el vínculo al reemplazar lo anotado a mano,
+//    no duplica el efectivo, un aviso que llega después del resumen lo confirma y borrar_movimiento libera el vencimiento
+await run(`delete from compromisos_registrados; delete from compromisos; delete from transferencias_internas; delete from avisos;
+  delete from movimientos; delete from saldos; delete from documentos;`);
+const idRubro = async (n) => (await db.query(`select min(id) as id from rubros where nombre = $1`, [n])).rows[0].id;
+const [rGasto, rTransf, rEfect] = [await idRubro("Efectivo no identificado"), await idRubro("Transferencia interna"), await idRubro("Movimiento de efectivo")];
+const diaI = (n) => { const d = new Date(); d.setDate(d.getDate() + n); return d.toISOString().slice(0, 10); };
+await run(`insert into compromisos (descripcion, tipo, cuenta_id, monto, moneda, frecuencia, fecha_proxima) values ('Alquiler', 'otro', 1, -2000, 'ARS', 'mensual', '${diaI(-10)}');
+  insert into movimientos (cuenta_id, fecha, descripcion_original, monto, moneda, rubro_id, origen, confianza, estado_conciliacion, id_externo) values
+    (1, '${diaI(-8)}', 'A la caja', -500, 'ARS', ${rTransf}, 'manual', 'confirmado', 'conciliado', 'manual:i1'),
+    (4, '${diaI(-8)}', 'Del banco', 500, 'ARS', ${rTransf}, 'manual', 'confirmado', 'conciliado', 'manual:i2');
+  insert into transferencias_internas (mov_salida_id, mov_entrada_id) select (select id from movimientos where id_externo = 'manual:i1'), (select id from movimientos where id_externo = 'manual:i2');`);
+console.log("I resumen:", await guardar({ cuenta_id: 1, documento: doc("resumen_cuenta", diaI(-30), diaI(-1), "i1"),
+  conciliar: [{ moneda: "ARS", fecha_inicial: diaI(-30), saldo_inicial: 10000, fecha_final: diaI(-1), saldo_final: 7500 }],
+  movimientos: [{ ...mov(diaI(-10), "ALQUILER", -2000, "ARS", "i-a"), rubro_id: rGasto }, { ...mov(diaI(-8), "EXTRACCION", -500, "ARS", "i-b"), rubro_id: rEfect }] }));
+console.log("I alquiler vencido después del resumen (debe ser 0):", (await db.query(`select count(*)::int as n from v_flujo_proyectado where descripcion = 'Alquiler' and fecha < current_date`)).rows[0].n,
+  "| movimientos en la caja (debe ser 1):", (await db.query(`select count(*)::int as n from movimientos where cuenta_id = 4`)).rows[0].n,
+  "| retiro emparejado resumen→caja:", (await db.query(`select s.origen || '→' || e.cuenta_id as par from transferencias_internas t join movimientos s on s.id = t.mov_salida_id join movimientos e on e.id = t.mov_entrada_id`)).rows.map((r) => r.par));
+console.log("I aviso que llega después del resumen:", (await aviso({ message_id: "i9", asunto: "Transferencia", recibido: new Date().toISOString(),
+  aviso: tr({ monto: -2000, fecha: diaI(-10), comprobante: "i9" }) })).estado, "| movimientos de 2000 (debe ser 1):",
+  (await db.query(`select count(*)::int as n from movimientos where monto = -2000`)).rows[0].n);
+await run(`insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima) values ('Luz', 'otro', -300, 'ARS', 'unica', '${diaI(-2)}');
+  insert into movimientos (cuenta_id, fecha, descripcion_original, monto, moneda, origen, confianza, estado_conciliacion, id_externo) values (1, current_date, 'Luz', -300, 'ARS', 'manual', 'confirmado', 'no_aplica', 'manual:i3');
+  insert into compromisos_registrados (compromiso_id, fecha, movimiento_id) select id, fecha_proxima, (select id from movimientos where id_externo = 'manual:i3') from compromisos where descripcion = 'Luz';`);
+await db.query(`select borrar_movimiento((select id from movimientos where id_externo = 'manual:i3'))`);
+console.log("I luz vuelve a lo que viene tras borrar su pago (debe ser 1):", (await db.query(`select count(*)::int as n from v_flujo_proyectado where descripcion = 'Luz'`)).rows[0].n);
