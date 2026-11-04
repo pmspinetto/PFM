@@ -316,3 +316,13 @@ await run(`insert into movimientos (cuenta_id, fecha, descripcion_original, mont
 console.log("T con la entrada ya anotada:", (await aviso({ message_id: "t2", asunto: "Transferencia", recibido: new Date().toISOString(),
   aviso: tr({ monto: -4000, comprobante: "556", cbu: "0000003100000000000099", descripcion: "Transferencia a mí" }) })).estado,
   (await db.query(`select count(*)::int as n from movimientos where monto = 4000`)).rows[0].n, "entrada(s) de 4000");
+
+// G2) Gasto grande que paga un compromiso ya cargado: no avisa
+await run(`update config_alertas set activas = true, gasto_grande = 100 where id = 1;
+  insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima) values ('Luz', 'servicio', -5000, 'ARS', 'mensual', current_date);
+  insert into movimientos (cuenta_id, fecha, descripcion_original, monto, moneda, origen, confianza, estado_conciliacion, id_externo)
+    values (1, current_date, 'Luz pagada', -5000, 'ARS', 'manual', 'confirmado', 'no_aplica', 'manual:g1'),
+           (1, current_date, 'Compra grande', -6000, 'ARS', 'manual', 'confirmado', 'no_aplica', 'manual:g2');
+  insert into compromisos_registrados (compromiso_id, fecha, movimiento_id)
+    select k.id, k.fecha_proxima, m.id from compromisos k, movimientos m where k.descripcion = 'Luz' and m.id_externo = 'manual:g1'`);
+console.log("G2 gastos grandes:", (await db.query(`select titulo from alertas_calcular() where tipo = 'gasto_grande' and titulo like '%Luz pagada%' or titulo like '%Compra grande%'`)).rows.map((r) => r.titulo));
