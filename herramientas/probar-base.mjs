@@ -326,3 +326,8 @@ await run(`update config_alertas set activas = true, gasto_grande = 100 where id
   insert into compromisos_registrados (compromiso_id, fecha, movimiento_id)
     select k.id, k.fecha_proxima, m.id from compromisos k, movimientos m where k.descripcion = 'Luz' and m.id_externo = 'manual:g1'`);
 console.log("G2 gastos grandes:", (await db.query(`select titulo from alertas_calcular() where tipo = 'gasto_grande' and titulo like '%Luz pagada%' or titulo like '%Compra grande%'`)).rows.map((r) => r.titulo));
+
+// S) Un aviso sospechoso que después pasa la verificación se registra
+console.log("S sospechoso:", (await aviso({ message_id: "s1", asunto: "Transferencia", estado: "sospechoso", datos: { motivo: "x" } })).estado,
+  "| verificado después:", (await aviso({ message_id: "s1", asunto: "Transferencia", recibido: new Date().toISOString(),
+    aviso: tr({ monto: -7000, comprobante: "777000", descripcion: "Transferencia a otro" }) })).estado);

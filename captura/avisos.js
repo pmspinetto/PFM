@@ -196,10 +196,14 @@ var Avisos = (function () {
     var dmarc = v.match(/dmarc=pass[^;]*?header\.from=([a-z0-9.-]+)/);
     if (dmarc && permitido(dmarc[1])) return true;
 
-    // Redirigido por una regla de Outlook desde una casilla propia
-    var origen = v.match(/spf=pass[^;]*?smtp\.mailfrom=([^\s;]+)/);
+    // Redirigido por una regla de Outlook desde una casilla propia. Outlook a veces reescribe el remitente
+    // técnico con SRS ("casilla+SRS=hash=tt=dominio=usuario@hotmail.com", entre comillas): cuenta como la
+    // casilla propia solo si el dominio original que lleva adentro es el de un banco.
+    var origen = v.match(/spf=pass[^;]*?smtp\.mailfrom="?([^\s;"]+)"?/);
+    var srs = origen && origen[1].match(/^([^+@]+)\+srs\d?=[^=@]+=[^=@]+=([a-z0-9.-]+)=[^@]*@(.+)$/);
+    var mailfrom = srs ? (permitido(srs[2]) ? srs[1] + "@" + srs[3] : null) : origen && origen[1];
     var firmaMs = /dkim=pass[^;]*?header\.i=@(hotmail|outlook|live)\.com/.test(v);
-    if (origen && firmaMs && redirectores.indexOf(origen[1]) >= 0 && resultados[1]) {
+    if (mailfrom && firmaMs && redirectores.indexOf(mailfrom) >= 0 && resultados[1]) {
       var ms = resultados[1].valor.toLowerCase();
       var dm = ms.match(/^mx\.microsoft\.com\b[\s\S]*?dmarc=pass[^;]*?header\.from=([a-z0-9.-]+)/);
       if (dm && permitido(dm[1])) return true;
