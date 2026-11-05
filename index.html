@@ -1771,7 +1771,7 @@ function cuotasDe(k) {
 // Número de cuota de una fecha proyectada
 const cuotaNro = (k, fecha) => { const paso = MESES_FREC[k.frecuencia]; let n = 1;
   while (n < 600 && sumarMeses(k.fecha_proxima, paso * n) <= fecha) n++; return n; };
-const TIPOS_FIJO = { otro: "Ingreso (sueldo, honorarios, otros)", alquiler: "Alquiler", servicio: "Servicio", seguro: "Seguro", expensas: "Expensas",
+const TIPOS_FIJO = { otro: "Otro (sueldo, honorarios, impuestos…)", alquiler: "Alquiler", servicio: "Servicio", seguro: "Seguro", expensas: "Expensas",
                      educacion: "Educación", actividad: "Actividad", suscripcion: "Suscripción", prestamo: "Préstamo", cheque: "Cheque" };
 function editarFijo(k) {
   const nuevo = !k; k = k ?? { descripcion: "", tipo: "otro", monto: 0, moneda: "ARS", frecuencia: "mensual", fecha_proxima: hoyISO(), indexacion: "ninguna" };
