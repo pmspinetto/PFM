@@ -1757,8 +1757,8 @@ function proyectarPorCuenta(ss, filas, cuentaDe, hoy, fin) {
 }
 
 // Alta y edición de ingresos y gastos fijos (tabla compromisos)
-const FRECUENCIAS = { mensual: "Todos los meses", trimestral: "Cada 3 meses", semestral: "Cada 6 meses", anual: "Cada 12 meses", unica: "Una sola vez" };
-const MESES_FREC = { mensual: 1, trimestral: 3, semestral: 6, anual: 12 };
+const FRECUENCIAS = { mensual: "Todos los meses", bimestral: "Cada 2 meses", trimestral: "Cada 3 meses", semestral: "Cada 6 meses", anual: "Cada 12 meses", unica: "Una sola vez" };
+const MESES_FREC = { mensual: 1, bimestral: 2, trimestral: 3, semestral: 6, anual: 12 };
 const sumarMeses = (f, m) => { const d = new Date(f + "T12:00:00Z"); const dia = d.getUTCDate(); d.setUTCDate(1); d.setUTCMonth(d.getUTCMonth() + m);
   const ult = new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth() + 1, 0)).getUTCDate(); d.setUTCDate(Math.min(dia, ult)); return d.toISOString().slice(0, 10); };
 // Cantidad de cuotas de un compromiso con fecha de fin (null si no tiene límite)

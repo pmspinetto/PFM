@@ -204,10 +204,10 @@ await run(`delete from compromisos;
 console.table((await db.query("select fecha, monto from v_flujo_proyectado where fecha < '2027-06-01' order by fecha")).rows.map((r) => ({ fecha: r.fecha.toISOString().slice(0, 7), monto: r.monto })));
 console.log("I enero esperado (sep 1,9% + oct y nov estimados con el promedio jul-sep 1,9%):", Math.round(2860000 * 1.019 ** 3 * 100) / 100);
 
-// Q) Frecuencias cada 3 y 6 meses
+// Q) Frecuencias cada 2, 3 y 6 meses (debe dar 6, 4 y 2)
 await run(`delete from compromisos;
   insert into compromisos (descripcion, tipo, monto, moneda, frecuencia, fecha_proxima) values
-  ('Patente', 'otro', -100, 'ARS', 'trimestral', current_date + 1), ('Seguro', 'seguro', -200, 'ARS', 'semestral', current_date + 1);`);
+  ('Bimestral', 'otro', -50, 'ARS', 'bimestral', current_date + 1), ('Patente', 'otro', -100, 'ARS', 'trimestral', current_date + 1), ('Seguro', 'seguro', -200, 'ARS', 'semestral', current_date + 1);`);
 console.log("Q próximos 12 meses:", (await db.query(`select descripcion, count(*)::int as n from v_flujo_proyectado
   where fecha <= current_date + interval '12 months' group by 1 order by 1`)).rows);
 
