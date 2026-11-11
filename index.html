@@ -910,7 +910,7 @@ const COMO = {
     <li>No cuentan los rubros neutros (transferencias internas, pagos de tarjeta, movimientos de efectivo) ni los movimientos sin rubro.</li>
     <li>Las cuotas de tarjeta cuentan en el mes en que cierra el resumen que las trae.</li></ul>`,
   recurrente: `<p><code>Variación = (gasto recurrente del período − gasto recurrente del período anterior) ÷ gasto recurrente del período anterior × 100</code>.</p><p>El período anterior tiene la misma duración (1, 3, 6 o 12 meses) y termina justo antes. Los gastos marcados como extraordinarios no se comparan.</p>`,
-  ingresos: `<p><code>Ingresos = Σ importe en pesos</code> de los movimientos del período con rubro de tipo <b>ingreso</b> (sueldos, alquileres cobrados, rendimientos…), con los filtros elegidos. Las transferencias entre cuentas propias no son ingresos. Un sueldo cobrado del 25 a fin de mes cuenta en el mes siguiente: es el sueldo de ese mes, adelantado.</p>`,
+  ingresos: `<p><code>Ingresos = Σ importe en pesos</code> de los movimientos del período con rubro de tipo <b>ingreso</b> (sueldos, alquileres cobrados, rendimientos…), con los filtros elegidos. Las transferencias entre cuentas propias no son ingresos. Un sueldo o un alquiler cobrado del 25 a fin de mes cuenta en el mes siguiente: es el de ese mes, adelantado.</p>`,
   ahorro: `<p><code>Ahorro = Σ (−importe en pesos)</code> de los movimientos del período con rubro de tipo <b>ahorro</b>: la parte de capital de las cuotas de préstamos (que reduce la deuda) y lo invertido.</p>`,
   dispViene: `<p><code>Disponible hoy = Σ saldo de las cuentas en pesos que no son tarjetas</code>, igual que en Hoy. Es el punto de partida del saldo proyectado. Los dólares no entran en esta proyección.</p>`,
   egresos: `<p><code>Egresos = Σ |importe|</code> de los compromisos negativos en pesos que vencen dentro del horizonte elegido (1 semana a 6 meses), más los vencidos que todavía no se registraron ni se omitieron (cuentan como si se pagaran hoy).</p><ul>
@@ -1244,11 +1244,11 @@ function faltanResumenes(meses, saldosResumen) {
   }));
 }
 
-// Los sueldos se adelantan a veces unos días: lo cobrado del 25 a fin de mes es el sueldo del mes siguiente
-// (el que corresponde cobrar del 1 al 5) y El mes lo cuenta en ese mes. `mes` es la fecha con la que se imputa.
-const DIA_SUELDO_ADELANTADO = 25;
+// Los sueldos y los alquileres se cobran a veces unos días antes: lo cobrado del 25 a fin de mes es el del mes
+// siguiente (el que corresponde cobrar del 1 al 5) y El mes lo cuenta en ese mes. `mes` es la fecha con la que se imputa.
+const DIA_SUELDO_ADELANTADO = 25, INGRESOS_MENSUALES = ["Sueldo y honorarios", "Alquileres"];
 function fechaImputada(l) {
-  const adelantado = rubroDe(l.rubro_id)?.nombre === "Sueldo y honorarios" && Number(l.monto) > 0 && +l.fecha.slice(8, 10) >= DIA_SUELDO_ADELANTADO;
+  const adelantado = INGRESOS_MENSUALES.includes(rubroDe(l.rubro_id)?.nombre) && Number(l.monto) > 0 && +l.fecha.slice(8, 10) >= DIA_SUELDO_ADELANTADO;
   return adelantado ? sumarMeses(l.fecha.slice(0, 8) + "01", 1) : l.fecha;
 }
 
