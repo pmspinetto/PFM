@@ -90,6 +90,19 @@ details>summary{cursor:pointer;color:var(--marca);font-weight:600;font-size:.9re
 .cifra.click:hover{transform:translateY(-1px);border-color:var(--marca);box-shadow:0 4px 14px rgba(20,35,28,.08)}
 .cifra.click::after{content:"Ver detalle ›";position:absolute;top:1.05rem;right:1.1rem;font-size:.7rem;font-weight:600;color:var(--marca);opacity:0;transition:opacity .12s}
 .cifra.click:hover::after,.cifra.click:focus-visible::after{opacity:1}
+/* Cuentas de Hoy: una tarjeta por cuenta con el color de su banco (--c) */
+.ctas{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:.75rem}
+.ctas h4{grid-column:1/-1;margin:.6rem 0 0;font-size:.74rem;font-weight:600;color:var(--tinta-3);text-transform:uppercase;letter-spacing:.06em}
+.ctas h4:first-child{margin-top:0}
+.cta{all:unset;box-sizing:border-box;display:flex;flex-direction:column;gap:.2rem;padding:.9rem 1rem;border-radius:12px;cursor:pointer;
+  background:var(--c);color:#fff;box-shadow:0 2px 8px rgba(0,0,0,.12);transition:transform .12s,box-shadow .12s,filter .12s;min-height:118px}
+.cta:hover{transform:translateY(-2px);box-shadow:0 6px 16px rgba(0,0,0,.18);filter:brightness(1.06)}
+.cta:focus-visible{outline:3px solid var(--tinta);outline-offset:2px}
+.cta-banco{font-size:.7rem;font-weight:600;text-transform:uppercase;letter-spacing:.06em;opacity:.85}
+.cta-alias{font-weight:600;font-size:.95rem}
+.cta-val{font-size:1.35rem;font-weight:700;letter-spacing:-.02em;margin-top:auto}
+.cta-sub{font-size:.72rem;opacity:.85;line-height:1.3}
+.cta.sin{background:transparent;color:var(--tinta-2);border:2px dashed var(--renglon);box-shadow:none}
 dialog#detalle{border:0;border-radius:14px;padding:0;width:min(760px,94vw);max-height:86vh;background:var(--papel);color:var(--tinta);box-shadow:0 20px 60px rgba(0,0,0,.25)}
 dialog#detalle::backdrop{background:rgba(15,25,20,.45)}
 .dlg-cab{display:flex;align-items:center;justify-content:space-between;gap:1rem;padding:1rem 1.25rem;border-bottom:1px solid var(--renglon);position:sticky;top:0;background:var(--papel);z-index:1}
@@ -336,6 +349,7 @@ $("formLogin").addEventListener("submit", async (e) => {
 });
 
 // ---------- Referencias ----------
+let instituciones = null;
 async function cargarReferencias() {
   const q = await Promise.all([
     sb.from("cuentas").select("id, alias, persona_id, tipo, moneda, activa, numero, cbu_cvu, institucion_id").order("alias"),
@@ -344,10 +358,12 @@ async function cargarReferencias() {
     sb.from("activos").select("id, nombre").order("nombre"),
     sb.from("personas").select("id, nombre, tipo").order("id"),
     sb.from("reglas").select("*").order("prioridad").order("id"),
+    sb.from("instituciones").select("id, nombre"),
   ]);
   const err = q.find((r) => r.error);
   if (err) return mensaje("error", "No se pudieron cargar los datos: " + err.error.message);
-  const [cuentas, plasticos, rubros, activos, personas, reglas] = q.map((r) => r.data);
+  const [cuentas, plasticos, rubros, activos, personas, reglas, inst] = q.map((r) => r.data);
+  instituciones = inst;
   ref = { cuentas, plasticos, rubros, activos, personas,
           reglas: reglas.map((r) => ({ ...r, re: patronARegex(r.patron) })) };
 }
@@ -892,7 +908,7 @@ const COMO = {
     <li>No cuentan los rubros neutros (transferencias internas, pagos de tarjeta, movimientos de efectivo) ni los movimientos sin rubro.</li>
     <li>Las cuotas de tarjeta cuentan en el mes en que cierra el resumen que las trae.</li></ul>`,
   recurrente: `<p><code>Variación = (gasto recurrente del período − gasto recurrente del período anterior) ÷ gasto recurrente del período anterior × 100</code>.</p><p>El período anterior tiene la misma duración (1, 3, 6 o 12 meses) y termina justo antes. Los gastos marcados como extraordinarios no se comparan.</p>`,
-  ingresos: `<p><code>Ingresos = Σ importe en pesos</code> de los movimientos del período con rubro de tipo <b>ingreso</b> (sueldos, alquileres cobrados, rendimientos…), con los filtros elegidos. Las transferencias entre cuentas propias no son ingresos.</p>`,
+  ingresos: `<p><code>Ingresos = Σ importe en pesos</code> de los movimientos del período con rubro de tipo <b>ingreso</b> (sueldos, alquileres cobrados, rendimientos…), con los filtros elegidos. Las transferencias entre cuentas propias no son ingresos. Un sueldo cobrado del 25 a fin de mes cuenta en el mes siguiente: es el sueldo de ese mes, adelantado.</p>`,
   ahorro: `<p><code>Ahorro = Σ (−importe en pesos)</code> de los movimientos del período con rubro de tipo <b>ahorro</b>: la parte de capital de las cuotas de préstamos (que reduce la deuda) y lo invertido.</p>`,
   dispViene: `<p><code>Disponible hoy = Σ saldo de las cuentas en pesos que no son tarjetas</code>, igual que en Hoy. Es el punto de partida del saldo proyectado. Los dólares no entran en esta proyección.</p>`,
   egresos: `<p><code>Egresos = Σ |importe|</code> de los compromisos negativos en pesos que vencen dentro del horizonte elegido (1 semana a 6 meses), más los vencidos que todavía no se registraron ni se omitieron (cuentan como si se pagaran hoy).</p><ul>
@@ -1035,11 +1051,9 @@ async function verHoy() {
         : mas ? `Estimado: confirmado al ${dm(s.confirmado_al)}${mas}` : `Confirmado al ${dm(s.confirmado_al)}`);
       return estado;
     };
-    const filaSaldo = (s) => `<tr><td>${esc(s.alias)}<div class="tenue">${estadoDe(s)}</div></td><td class="num ${s.saldo_estimado < 0 ? "menos" : ""}">${conMoneda(s.saldo_estimado, s.moneda)}</td></tr>`;
     // Cuentas activas que todavía no tienen ningún saldo (ni resumen, ni informado, ni arqueo): se listan aparte,
     // sin sumar a los totales, hasta que se cargue su saldo con "Actualizar saldos"
     const sinSaldo = ref.cuentas.filter((c) => c.activa && !ss.some((s) => s.cuenta_id === c.id));
-    const filaSinSaldo = (c) => `<tr><td>${esc(c.alias)}<div class="tenue">Sin saldo cargado: cárgalo con "Actualizar saldos" para que sume</div></td><td class="num tenue">—</td></tr>`;
     // Detalles de los indicadores
     const detCuentas = (lista, mon) => {
       const xs = lista.filter((s) => s.moneda === mon).sort((a, b) => b.saldo_estimado - a.saldo_estimado);
@@ -1070,18 +1084,20 @@ async function verHoy() {
         ${cifra("Neto total en dólares", netoUSD == null ? "—" : dolares(netoUSD),
                 t ? `Dólar ${t.tipo} ${pesos(t.valor)} del ${dm(t.fecha)}` : "Carga el dólar en Patrimonio", "", detNeto, COMO.netoHoy)}
       </div>
+      <div class="panel"><h3>Mis cuentas</h3><div class="ctas">
+        <h4>Cuentas, billeteras y efectivo</h4>${liq.map((x) => tarjetaCuenta(x, estadoDe(x))).join("")}
+        ${tar.length ? `<h4>Tarjetas</h4>${tar.map((x) => tarjetaCuenta(x, estadoDe(x))).join("")}` : ""}
+        ${sinSaldo.length ? `<h4>Sin saldo cargado</h4>${sinSaldo.map((c) => tarjetaCuenta({ cuenta_id: c.id, alias: c.alias, moneda: c.moneda === "USD" ? "USD" : "ARS", cuenta: c }, "Cárgalo con \"Actualizar saldos\" para que sume", true)).join("")}` : ""}
+      </div></div>
       <div class="dos">
-        <div class="panel"><h3>Saldos por cuenta</h3><div class="tabla" style="border:0"><table class="mini">
-          <tbody>${liq.map(filaSaldo).join("")}${tar.map(filaSaldo).join("")}${sinSaldo.map(filaSinSaldo).join("")}</tbody></table></div></div>
         <div class="panel"><h3>Dónde está la plata</h3><div class="lienzo chico"><canvas id="gHoy"></canvas></div>
           <p class="tenue" style="margin-bottom:0">Saldos positivos de cuentas y efectivo; los dólares, en pesos al dólar ${t ? t.tipo : "de referencia"}.</p></div>
-      </div>
-      <div>
         <div class="panel"><h3>Últimos movimientos</h3><div class="tabla" style="border:0"><table class="mini"><tbody>
           ${(ult || []).map((m) => `<tr><td>${dm(m.fecha)}</td><td>${esc(m.descripcion_original).slice(0, 48)}<div class="tenue">${esc(cuentaDe(m.cuenta_id)?.alias)}, ${esc(rubroDe(m.rubro_id)?.nombre ?? "Sin clasificar")}</div>${m.origen === "mail" ? `<span class="chip">por mail</span>` : ""}</td>
             <td class="num ${m.monto < 0 ? "menos" : "mas"}">${conMoneda(m.monto, m.moneda)}</td></tr>`).join("")}
         </tbody></table></div></div>
       </div>`;
+    $("hoy-c").querySelectorAll("[data-cta]").forEach((b) => b.onclick = () => movimientosCuenta(+b.dataset.cta, b.dataset.mon));
     const enPesos = liq.map((s) => ({ alias: s.alias, v: s.moneda === "USD" ? Number(s.saldo_estimado) * (t?.valor ?? 0) : Number(s.saldo_estimado) }))
       .filter((x) => x.v > 0).sort((a, b) => b.v - a.v);
     grafico("gHoy", { type: "doughnut", data: { labels: enPesos.map((x) => x.alias),
@@ -1091,6 +1107,44 @@ async function verHoy() {
     $("btnAnotar").onclick = () => anotarMovimiento({ alGuardar: (aviso) => verHoy().then(() => $("hoy-c").insertAdjacentHTML("afterbegin", `<div class="msg ok">${aviso}</div>`)) });
     $("btnAlertas").onclick = configurarAlertas;
   } catch (e) { $("hoy-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
+}
+
+// Color de cada banco para las tarjetas de cuentas de Hoy (las tarjetas de crédito usan el de su banco)
+const COLOR_BANCO = { "Santander": "#EC0000", "BBVA": "#1464A5", "Macro": "#0E2A5A", "Ciudad": "#0A7D8C", "Nación": "#0072BB", "Mercado Pago": "#009EE3" };
+const TIPO_CORTO = { caja_ahorro: "Caja de ahorro", cuenta_sueldo: "Cuenta sueldo", cuenta_corriente: "Cuenta corriente",
+                     tarjeta_credito: "Tarjeta", billetera: "Billetera", caja_efectivo: "Efectivo" };
+const nombreBanco = (c) => instituciones?.find((i) => i.id === c?.institucion_id)?.nombre ?? "";
+const colorCuenta = (c) => COLOR_BANCO[nombreBanco(c)] ?? (c?.tipo === "caja_efectivo" ? "var(--marca)" : "#5B6B64");
+
+function tarjetaCuenta(s, estado, sin = false) {
+  const c = s.cuenta ?? cuentaDe(s.cuenta_id), banco = nombreBanco(c);
+  return `<button type="button" class="cta${sin ? " sin" : ""}" style="--c:${colorCuenta(c)}" data-cta="${s.cuenta_id}" data-mon="${s.moneda}"
+    title="Ver los movimientos de ${esc(s.alias)}">
+    <span class="cta-banco">${esc([banco, TIPO_CORTO[c?.tipo]].filter(Boolean).join(" · "))}${s.moneda === "USD" ? " · USD" : ""}</span>
+    <span class="cta-alias">${esc(s.alias)}</span>
+    <span class="cta-val">${sin ? "—" : conMoneda(s.saldo_estimado, s.moneda)}</span>
+    <span class="cta-sub">${estado}</span></button>`;
+}
+
+// Movimientos de una cuenta (los últimos 100, en la moneda elegida)
+async function movimientosCuenta(id, moneda) {
+  const c = cuentaDe(id);
+  abrirVentana(c?.alias ?? "Cuenta", `<p class="tenue">Cargando…</p>`);
+  const { data, error } = await sb.from("movimientos").select("id, fecha, descripcion_original, monto, moneda, rubro_id, origen, confianza")
+    .eq("cuenta_id", id).eq("moneda", moneda).order("fecha", { ascending: false }).order("id", { ascending: false }).limit(100);
+  if (error) return ($("detCuerpo").innerHTML = `<div class="msg error">${esc(error.message)}</div>`);
+  const meses = {};
+  for (const m of data) (meses[m.fecha.slice(0, 7)] ??= []).push(m);
+  const nombreMes = (m) => new Date(m + "-15T12:00:00Z").toLocaleDateString("es-AR", { month: "long", year: "numeric" });
+  $("detCuerpo").innerHTML = data.length ? Object.entries(meses).map(([m, xs]) => {
+    const neto = xs.reduce((a, x) => a + Number(x.monto), 0);
+    return `<h4 style="margin:1rem 0 .3rem;display:flex;justify-content:space-between"><span style="text-transform:capitalize">${nombreMes(m)}</span>
+      <span class="${neto < 0 ? "menos" : "mas"}" style="font-weight:600">${conMoneda(neto, moneda)}</span></h4>
+      <table class="mini"><tbody>${xs.map((x) => `<tr><td style="width:3.2rem">${dm(x.fecha)}</td>
+        <td>${esc(x.descripcion_original)}<div class="tenue">${esc(rubroDe(x.rubro_id)?.nombre ?? "Sin clasificar")}${x.origen === "mail" ? " · por mail" : x.origen === "manual" ? " · anotado a mano" : ""}</div></td>
+        <td class="num ${x.monto < 0 ? "menos" : "mas"}">${conMoneda(x.monto, x.moneda)}</td></tr>`).join("")}</tbody></table>`;
+  }).join("") + (data.length === 100 ? `<p class="tenue">Se muestran los últimos 100 movimientos.</p>` : "")
+    : `<p class="tenue">Esta cuenta no tiene movimientos en ${moneda === "USD" ? "dólares" : "pesos"}.</p>`;
 }
 
 // Umbrales de las alertas (también llegan por mail desde el script de Gmail)
@@ -1186,10 +1240,18 @@ function faltanResumenes(meses, saldosResumen) {
   }));
 }
 
+// Los sueldos se adelantan a veces unos días: lo cobrado del 25 a fin de mes es el sueldo del mes siguiente
+// (el que corresponde cobrar del 1 al 5) y El mes lo cuenta en ese mes. `mes` es la fecha con la que se imputa.
+const DIA_SUELDO_ADELANTADO = 25;
+function fechaImputada(l) {
+  const adelantado = rubroDe(l.rubro_id)?.nombre === "Sueldo y honorarios" && Number(l.monto) > 0 && +l.fecha.slice(8, 10) >= DIA_SUELDO_ADELANTADO;
+  return adelantado ? sumarMeses(l.fecha.slice(0, 8) + "01", 1) : l.fecha;
+}
+
 async function lineasDelRango({ desde, hasta }) {
-  const { data, error } = await sb.from("v_lineas").select("*").gte("fecha", desde).lte("fecha", hasta);
+  const { data, error } = await sb.from("v_lineas").select("*").gte("fecha", sumarDias(desde, -10)).lte("fecha", hasta);
   if (error) throw error;
-  return filtrarLineas(data);
+  return filtrarLineas(data.map((l) => ({ ...l, mes: fechaImputada(l) })).filter((l) => l.mes >= desde && l.mes <= hasta));
 }
 
 function resumirMes(lineas) {
@@ -1222,7 +1284,7 @@ async function verMes() {
     if (rq.error) throw rq.error;
     // Evolución de los últimos 12 meses (con los mismos filtros)
     const meses12 = Array.from({ length: 12 }, (_, i) => { const d = new Date(Date.UTC(+mes.slice(0, 4), +mes.slice(5, 7) - 12 + i, 1)); return d.toISOString().slice(0, 7); });
-    const porMes = meses12.map((m) => resumirMes(anio.filter((l) => l.fecha.startsWith(m))));
+    const porMes = meses12.map((m) => resumirMes(anio.filter((l) => l.mes.startsWith(m))));
     const etiquetaMes = (m) => new Date(m + "-15T12:00:00Z").toLocaleDateString("es-AR", { month: "short", year: "2-digit" });
     const faltan = faltanResumenes(meses12, rq.data);
     const periodo = n === 1 ? "mes" : `${n} meses`;
