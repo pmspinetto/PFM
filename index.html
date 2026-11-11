@@ -669,7 +669,7 @@ const textoResultados = (resultados) => resultados.map((r) => r.ya_importado ? `
       (r.absorbidos ? `, ${r.absorbidos} confirmaron avisos que habían llegado por mail` : "") +
       (r.sin_confirmar ? `, ${r.sin_confirmar} avisos por mail no aparecieron en el resumen (quedan en Pendientes)` : "")).join("<br>");
 
-$("btnGuardar").onclick = async () => {
+$("btnGuardar").onclick = unaVez(async () => {
   $("btnGuardar").disabled = true;
   mensaje("info", "Guardando…");
   try {
@@ -684,7 +684,7 @@ $("btnGuardar").onclick = async () => {
     mensaje("error", "No se guardó nada de esta cuenta. " + esc(err.message));
     $("btnGuardar").disabled = false;
   }
-};
+});
 
 // ---------- Bandeja: resúmenes que llegaron por mail ----------
 // Al entrar a la app se procesan solos los pendientes: se guardan si concilian, todas las cuentas
@@ -764,6 +764,18 @@ const pesos = (n) => conSigno("$", n);
 const dolares = (n) => conSigno("US$", n);
 const conMoneda = (n, mon) => (mon === "USD" ? dolares(n) : pesos(n));
 const dm = (f) => f ? f.slice(8, 10) + "/" + f.slice(5, 7) : "";
+// Evita el doble clic: mientras el botón está guardando no responde y queda deshabilitado.
+// Si el guardado marca data-fin (no hay que reintentar), queda deshabilitado.
+function unaVez(fn) {
+  let ocupado = false;
+  return async function (...a) {
+    if (ocupado) return;
+    ocupado = true; this.disabled = true;
+    try { return await fn.apply(this, a); }
+    finally { ocupado = false; if (!this.dataset.fin) this.disabled = false; }
+  };
+}
+
 const hoyISO = () => new Date(Date.now() - new Date().getTimezoneOffset() * 60000).toISOString().slice(0, 10);
 const sumarDias = (f, d) => { const x = new Date(f + "T12:00:00Z"); x.setUTCDate(x.getUTCDate() + d); return x.toISOString().slice(0, 10); };
 const css = (v) => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
@@ -1024,6 +1036,10 @@ async function verHoy() {
       return estado;
     };
     const filaSaldo = (s) => `<tr><td>${esc(s.alias)}<div class="tenue">${estadoDe(s)}</div></td><td class="num ${s.saldo_estimado < 0 ? "menos" : ""}">${conMoneda(s.saldo_estimado, s.moneda)}</td></tr>`;
+    // Cuentas activas que todavía no tienen ningún saldo (ni resumen, ni informado, ni arqueo): se listan aparte,
+    // sin sumar a los totales, hasta que se cargue su saldo con "Actualizar saldos"
+    const sinSaldo = ref.cuentas.filter((c) => c.activa && !ss.some((s) => s.cuenta_id === c.id));
+    const filaSinSaldo = (c) => `<tr><td>${esc(c.alias)}<div class="tenue">Sin saldo cargado: cárgalo con "Actualizar saldos" para que sume</div></td><td class="num tenue">—</td></tr>`;
     // Detalles de los indicadores
     const detCuentas = (lista, mon) => {
       const xs = lista.filter((s) => s.moneda === mon).sort((a, b) => b.saldo_estimado - a.saldo_estimado);
@@ -1056,7 +1072,7 @@ async function verHoy() {
       </div>
       <div class="dos">
         <div class="panel"><h3>Saldos por cuenta</h3><div class="tabla" style="border:0"><table class="mini">
-          <tbody>${liq.map(filaSaldo).join("")}${tar.map(filaSaldo).join("")}</tbody></table></div></div>
+          <tbody>${liq.map(filaSaldo).join("")}${tar.map(filaSaldo).join("")}${sinSaldo.map(filaSinSaldo).join("")}</tbody></table></div></div>
         <div class="panel"><h3>Dónde está la plata</h3><div class="lienzo chico"><canvas id="gHoy"></canvas></div>
           <p class="tenue" style="margin-bottom:0">Saldos positivos de cuentas y efectivo; los dólares, en pesos al dólar ${t ? t.tipo : "de referencia"}.</p></div>
       </div>
@@ -1119,7 +1135,7 @@ function formularioSaldos(ss, tar) {
     <div class="barra-filtros" style="margin:1rem 0 0"><button id="btnGuardarSaldos" type="button">Guardar saldos</button>
       <button class="sec" id="btnCerrarSaldos" type="button">Cancelar</button><span id="msgSaldos" class="tenue"></span></div></div>`;
   $("btnCerrarSaldos").onclick = () => ($("formSaldos").innerHTML = "");
-  $("btnGuardarSaldos").onclick = async () => {
+  $("btnGuardarSaldos").onclick = unaVez(async () => {
     const hoy = hoyISO(), filasOk = [];
     for (const inp of $("formSaldos").querySelectorAll("input[data-i]")) {
       if (!inp.value.trim()) continue;
@@ -1132,7 +1148,7 @@ function formularioSaldos(ss, tar) {
     const { error } = await sb.from("saldos").upsert(filasOk, { onConflict: "cuenta_id,fecha,moneda" });
     if (error) return ($("msgSaldos").textContent = error.message);
     verHoy();
-  };
+  });
 }
 
 // ---------------- EL MES ----------------
@@ -1305,7 +1321,7 @@ async function detalleGastos(lineas) {
            <td class="num menos">${pesos(f.monto)}</td><td></td></tr>`).join("")}
     </tbody></table></div>
     <div class="barra-filtros" style="margin:.75rem 0 0"><button class="sec" id="btnAgrupar" type="button">Agrupar como una compra</button><span id="msgAgrupar" class="tenue"></span></div>`;
-  $("btnAgrupar").onclick = async () => {
+  $("btnAgrupar").onclick = unaVez(async () => {
     const ids = [...$("detalleMes").querySelectorAll("input[data-mov]:checked")].map((x) => +x.dataset.mov);
     if (ids.length < 2) return ($("msgAgrupar").textContent = "Marca al menos dos pagos.");
     const nombre = prompt("¿Qué fue la compra? (por ejemplo, 4 mesas de luz)");
@@ -1317,7 +1333,7 @@ async function detalleGastos(lineas) {
     const { error: e2 } = await sb.from("movimientos").update({ compra_id: c.id, es_extraordinario: true }).in("id", ids);
     if (e2) return ($("msgAgrupar").textContent = e2.message);
     verMes();
-  };
+  });
   $("detalleMes").querySelectorAll("[data-desagrupar]").forEach((b) => b.onclick = async () => {
     const id = +b.dataset.desagrupar;
     const { error } = await sb.from("movimientos").update({ compra_id: null }).eq("compra_id", id);
@@ -1379,7 +1395,7 @@ function anotarMovimiento(op = {}) {
   };
   $("detCuerpo").querySelectorAll("[data-sg]").forEach((b) => b.onclick = () => { sg = +b.dataset.sg; verTipo(); });
   verTipo();
-  $("amGuardar").onclick = async () => {
+  $("amGuardar").onclick = unaVez(async () => {
     const n = numeroAR($("amMonto").value), c = cuentaDe(+$("amCuenta").value), fecha = $("amFecha").value || hoyISO();
     if (!c) return ($("amMsg").textContent = "Elige la cuenta.");
     if (!n) return ($("amMsg").textContent = "Escribe el monto.");
@@ -1397,7 +1413,7 @@ function anotarMovimiento(op = {}) {
     if (error) { $("amGuardar").disabled = false; return ($("amMsg").innerHTML = `<span class="menos">No se pudo anotar: ${esc(error.message)}</span>`); }
     if (op.registro) {
       const { error: e2 } = await sb.from("compromisos_registrados").insert({ ...op.registro, movimiento_id: data.id });
-      if (e2) return ($("amMsg").innerHTML = `<span class="menos">Se anotó el movimiento, pero no se pudo sacar de lo que viene: ${esc(e2.message)}. No lo anotes de nuevo: cierra esta ventana y usa "Omitir" en ese vencimiento.</span>`);
+      if (e2) { $("amGuardar").dataset.fin = 1; return ($("amMsg").innerHTML = `<span class="menos">Se anotó el movimiento, pero no se pudo sacar de lo que viene: ${esc(e2.message)}. No lo anotes de nuevo: cierra esta ventana y usa "Omitir" en ese vencimiento.</span>`); }
     }
     // El saldo parte del último saldo conocido: lo anotado con fecha anterior o igual no lo cambia
     const { data: sv } = await sb.from("v_saldo_vivo").select("confirmado_al, fuente").eq("cuenta_id", c.id).eq("moneda", moneda);
@@ -1406,7 +1422,7 @@ function anotarMovimiento(op = {}) {
     const aviso = `${sg < 0 ? "Gasto" : "Ingreso"} de ${conMoneda(Math.abs(n), moneda)} del ${dm(fecha)} anotado en ${esc(c.alias)}.${antes
       ? ` Es anterior al último saldo conocido (${dm(base)}), así que no cambia el saldo de la cuenta; sí cuenta en El mes.` : ""}`;
     await op.alGuardar?.(aviso);
-  };
+  });
 }
 
 // Antes de anotar: si la cuenta ya tiene un movimiento del mismo importe a 5 días o menos (por ejemplo, llegado por mail), pregunta
@@ -1824,7 +1840,7 @@ function editarFijo(k) {
     if (sg > 0 && $("fjTipo").value !== "alquiler") $("fjTipo").value = "otro";
     verAgui();
   });
-  $("fjGuardar").onclick = async () => {
+  $("fjGuardar").onclick = unaVez(async () => {
     let monto = numeroAR($("fjMonto").value);
     const desc = $("fjDesc").value.trim(), fecha = $("fjFecha").value, frec = $("fjFrec").value;
     if (!desc || !monto || !fecha) return ($("fjMsg").textContent = "Completa qué es, el monto y la próxima fecha.");
@@ -1851,7 +1867,7 @@ function editarFijo(k) {
         await sb.from("compromisos_registrados").insert(pasadas.map((x) => ({ compromiso_id: x.compromiso_id, fecha: x.fecha, aguinaldo: !!x.aguinaldo, omitido: true })));
     }
     $("detalle").close(); verViene();
-  };
+  });
   if (!nuevo) $("fjBorrar").onclick = async () => {
     if (!confirm(`¿Quitar "${k.descripcion}" de lo que viene?`)) return;
     const { error } = await sb.from("compromisos").update({ activo: false }).eq("id", k.id);
@@ -2032,19 +2048,19 @@ async function verPatrimonio() {
       options: { maintainAspectRatio: false, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => " " + dolares(c.raw) } } },
                  scales: { x: { grid: { display: false } }, y: { beginAtZero: true, ticks: { callback: (x) => dolares(x) } } } } });
     $("pat-c").querySelectorAll("[data-editar-activo]").forEach((b) => b.onclick = () => editarActivo(activos.find((a) => a.id === +b.dataset.editarActivo)));
-    $("tcBtn").onclick = async () => {
+    $("tcBtn").onclick = unaVez(async () => {
       const n = numeroAR($("tcIn").value);
       if (!n) return;
       const { error } = await sb.from("tipos_cambio").upsert({ fecha: hoyISO(), tipo: "mep", venta: n });
       if (error) return alert(error.message);
       verPatrimonio();
-    };
+    });
     const mostrarPf = () => {
       $("pat-c").querySelectorAll(".pf").forEach((x) => x.classList.toggle("oculto", $("invTipo").value !== "plazo_fijo"));
       if ($("invTipo").value.startsWith("b:")) $("invMoneda").value = "USD";
     };
     $("invTipo").onchange = mostrarPf; mostrarPf();
-    $("invGuardar").onclick = async () => {
+    $("invGuardar").onclick = unaVez(async () => {
       const nombre = $("invNombre").value.trim(), monto = numeroAR($("invMonto").value), tipoSel = $("invTipo").value, mon = $("invMoneda").value;
       if (!nombre || !monto) return ($("invMsg").textContent = "Completa el nombre y el valor.");
       const bien = tipoSel.startsWith("b:"), sub = bien ? null : tipoSel;
@@ -2058,21 +2074,21 @@ async function verPatrimonio() {
       if (pf) await sb.from("compromisos").insert({ descripcion: `Vence ${nombre}`, tipo: "otro", activo_id: a.id, moneda: mon, indexacion: "ninguna",
         frecuencia: "unica", fecha_proxima: a.fecha_vencimiento, monto: Math.round(devengado(a, a.fecha_vencimiento) * 100) / 100 });
       await cargarReferencias(); verPatrimonio();
-    };
+    });
     $("pat-c").querySelectorAll("[data-valuar]").forEach((b) => b.onclick = () => {
       $("valActivo").value = b.dataset.valuar;
       $("valMoneda").value = activos.find((a) => a.id === +b.dataset.valuar)?.moneda ?? "USD";
       $("valFuente").value = "valor de mercado";
       $("valMin").focus();
     });
-    $("valGuardar").onclick = async () => {
+    $("valGuardar").onclick = unaVez(async () => {
       const id = +$("valActivo").value, min = numeroAR($("valMin").value), max = numeroAR($("valMax").value) ?? min;
       if (!id || !min) return ($("valMsg").textContent = "Elige el bien y escribe el valor.");
       const { error } = await sb.from("valuaciones").insert({ activo_id: id, fecha: hoyISO(), valor_min: Math.min(min, max), valor_max: Math.max(min, max),
         moneda: $("valMoneda").value, fuente: $("valFuente").value.trim() || "estimación propia" });
       if (error) return ($("valMsg").textContent = error.message);
       verPatrimonio();
-    };
+    });
     if (prestUva.length) {
       const llenar = () => { const p = prestUva.find((x) => x.id === +$("uvaPrest").value); $("uvaTna").value = p?.tna ?? ""; };
       $("uvaPrest").onchange = llenar; llenar();
@@ -2100,7 +2116,7 @@ function editarActivo(a) {
       <div style="grid-column:1/-1"><label for="eaNotas">Notas</label><input id="eaNotas" type="text" value="${esc(a.notas ?? "")}"></div>
       <div class="acciones"><button id="eaGuardar" type="button">Guardar</button><button class="sec" id="eaBorrar" type="button">Dar de baja</button><span id="eaMsg" class="tenue"></span></div>
     </div>`);
-  $("eaGuardar").onclick = async () => {
+  $("eaGuardar").onclick = unaVez(async () => {
     const nombre = $("eaNombre").value.trim();
     if (!nombre) return ($("eaMsg").textContent = "El nombre no puede quedar vacío.");
     const tipo = $("eaTipo").value;
@@ -2108,7 +2124,7 @@ function editarActivo(a) {
       subtipo: tipo === "inversion" ? ($("eaSub")?.value ?? a.subtipo ?? "otro") : null }).eq("id", a.id);
     if (error) return ($("eaMsg").textContent = error.message.includes("duplicate") ? "Ya hay un bien con ese nombre." : error.message);
     $("detalle").close(); await cargarReferencias(); verPatrimonio();
-  };
+  });
   $("eaBorrar").onclick = async () => {
     if (!confirm(`¿Dar de baja "${a.nombre}"? Se borran también sus valuaciones y sus ingresos y gastos fijos.`)) return;
     // Primero se comprueba que se pueda: si tiene movimientos, reglas o un préstamo no se toca nada
@@ -2215,13 +2231,13 @@ async function verPendientes() {
           <td><button class="sec" data-desemparejar type="button">Desemparejar</button></td></tr>`).join("") || `<tr><td class="tenue">Todavía no hay emparejamientos.</td></tr>`}
       </tbody></table></div>`;
 
-    $("btnEmparejar").onclick = async () => {
+    $("btnEmparejar").onclick = unaVez(async () => {
       const s = document.querySelector("input[name=parS]:checked"), e = document.querySelector("input[name=parE]:checked");
       if (!s || !e) return ($("msgPar").textContent = "Marca una salida y una entrada.");
       const { error } = await sb.rpc("emparejar", { p_salida: +s.value, p_entrada: +e.value });
       if (error) return ($("msgPar").textContent = error.message);
       verPendientes();
-    };
+    });
     $("pend-c").querySelectorAll("[data-desemparejar]").forEach((b) => b.onclick = async () => {
       const tr = b.closest("tr");
       if (!confirm("¿Desemparejar estos dos movimientos? Vuelven a quedar sin contraparte.")) return;
@@ -2325,7 +2341,7 @@ async function verEfectivo(aviso = "") {
       signo = +b.dataset.tipo;
       $("efe-c").querySelectorAll("[data-tipo]").forEach((x) => x.classList.toggle("activo", x === b));
     });
-    $("efGuardar").onclick = async () => {
+    $("efGuardar").onclick = unaVez(async () => {
       const n = numeroAR($("efMonto").value), caja = cuentaDe(+$("efCaja").value);
       if (!n) return ($("efMsg").textContent = "Escribe el monto.");
       if (!$("efRubro").value) return ($("efMsg").textContent = "Elige un rubro.");
@@ -2344,8 +2360,8 @@ async function verEfectivo(aviso = "") {
       verEfectivo(`<div class="msg ${antes ? "info" : "ok"}">${que}${
         !base ? " La caja todavía no tiene arqueo: el saldo se va a ver cuando hagas el primero."
         : antes ? ` Es anterior al último arqueo (${dm(base.confirmado_al)}), así que no cambia el saldo de la caja: ya estaba incluido en lo que contaste. Sí cuenta en El mes y en los análisis.` : ""}</div>`);
-    };
-    $("arGuardar").onclick = async () => {
+    });
+    $("arGuardar").onclick = unaVez(async () => {
       const n = numeroAR($("arMonto").value);
       if (n == null) return ($("arMsg").textContent = "Escribe el monto contado.");
       const caja = cuentaDe(+$("arCaja").value);
@@ -2354,7 +2370,7 @@ async function verEfectivo(aviso = "") {
       await verEfectivo();
       $("arMsg").textContent = Number(data.diferencia)
         ? `Diferencia de ${conMoneda(data.diferencia, caja.moneda)} registrada como efectivo no identificado.` : "Coincide con lo esperado.";
-    };
+    });
   } catch (e) { $("efe-c").innerHTML = `<div class="msg error">${esc(e.message)}</div>`; }
 }
 
@@ -2400,13 +2416,13 @@ function verRubros() {
           <td style="white-space:nowrap"><button class="sec" data-guardar-regla type="button">Guardar</button> <button class="sec" data-borrar-regla type="button">Borrar</button></td></tr>`).join("")}
       </tbody></table></div><span id="msgReglas" class="tenue"></span></div>`;
 
-  $("rubBtn").onclick = async () => {
+  $("rubBtn").onclick = unaVez(async () => {
     const nombre = $("rubNombre").value.trim(); if (!nombre) return;
     const g = ref.rubros.find((r) => r.id === +$("rubGrupo").value);
     const { error } = await sb.from("rubros").insert({ padre_id: g.id, nombre, tipo: g.tipo });
     if (error) return alert(error.message.includes("duplicate") ? "Ese rubro ya existe en el grupo." : error.message);
     await cargarReferencias(); verRubros();
-  };
+  });
   $("rub-c").querySelectorAll("[data-guardar-rubro]").forEach((b) => b.onclick = async () => {
     const id = +b.dataset.guardarRubro, r = rubroDe(id);
     const cambios = { nombre: RUBROS_SISTEMA.includes(r.nombre) ? r.nombre : $("rub-c").querySelector(`[data-nombre="${id}"]`).value.trim() };
