@@ -1116,11 +1116,13 @@ const COLOR_BANCO = { "Santander": "#EC0000", "BBVA": "#1464A5", "Macro": "#0E2A
 const TIPO_CORTO = { caja_ahorro: "Caja de ahorro", cuenta_sueldo: "Cuenta sueldo", cuenta_corriente: "Cuenta corriente",
                      tarjeta_credito: "Tarjeta", billetera: "Billetera", caja_efectivo: "Efectivo" };
 const nombreBanco = (c) => instituciones?.find((i) => i.id === c?.institucion_id)?.nombre ?? "";
+// Segundo color de marca: una franja arriba de la tarjeta (Mercado Pago: celeste con amarillo)
+const FRANJA_BANCO = { "Mercado Pago": "#FFE600" };
 const colorCuenta = (c) => COLOR_BANCO[nombreBanco(c)] ?? (c?.tipo === "caja_efectivo" ? "var(--marca)" : "#5B6B64");
 
 function tarjetaCuenta(s, estado, sin = false) {
   const c = s.cuenta ?? cuentaDe(s.cuenta_id), banco = nombreBanco(c);
-  return `<button type="button" class="cta${sin ? " sin" : Math.abs(Number(s.saldo_estimado)) < 1 ? " cero" : ""}" style="--c:${colorCuenta(c)}" data-cta="${s.cuenta_id}" data-mon="${s.moneda}"
+  return `<button type="button" class="cta${sin ? " sin" : Math.abs(Number(s.saldo_estimado)) < 1 ? " cero" : ""}" style="--c:${colorCuenta(c)}${FRANJA_BANCO[banco] && !sin ? `;border-top:6px solid ${FRANJA_BANCO[banco]}` : ""}" data-cta="${s.cuenta_id}" data-mon="${s.moneda}"
     title="Ver los movimientos de ${esc(s.alias)}">
     <span class="cta-banco">${esc([banco, TIPO_CORTO[c?.tipo]].filter(Boolean).join(" · "))}${s.moneda === "USD" ? " · USD" : ""}</span>
     <span class="cta-alias">${esc(s.alias)}</span>
