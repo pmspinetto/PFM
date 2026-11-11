@@ -102,6 +102,8 @@ details>summary{cursor:pointer;color:var(--marca);font-weight:600;font-size:.9re
 .cta-alias{font-weight:600;font-size:.95rem}
 .cta-val{font-size:1.35rem;font-weight:700;letter-spacing:-.02em;margin-top:auto}
 .cta-sub{font-size:.72rem;opacity:.85;line-height:1.3}
+.cta.cero{opacity:.55}
+.cta.cero:hover{opacity:.9}
 .cta.sin{background:transparent;color:var(--tinta-2);border:2px dashed var(--renglon);box-shadow:none}
 dialog#detalle{border:0;border-radius:14px;padding:0;width:min(760px,94vw);max-height:86vh;background:var(--papel);color:var(--tinta);box-shadow:0 20px 60px rgba(0,0,0,.25)}
 dialog#detalle::backdrop{background:rgba(15,25,20,.45)}
@@ -1118,7 +1120,7 @@ const colorCuenta = (c) => COLOR_BANCO[nombreBanco(c)] ?? (c?.tipo === "caja_efe
 
 function tarjetaCuenta(s, estado, sin = false) {
   const c = s.cuenta ?? cuentaDe(s.cuenta_id), banco = nombreBanco(c);
-  return `<button type="button" class="cta${sin ? " sin" : ""}" style="--c:${colorCuenta(c)}" data-cta="${s.cuenta_id}" data-mon="${s.moneda}"
+  return `<button type="button" class="cta${sin ? " sin" : Math.abs(Number(s.saldo_estimado)) < 1 ? " cero" : ""}" style="--c:${colorCuenta(c)}" data-cta="${s.cuenta_id}" data-mon="${s.moneda}"
     title="Ver los movimientos de ${esc(s.alias)}">
     <span class="cta-banco">${esc([banco, TIPO_CORTO[c?.tipo]].filter(Boolean).join(" · "))}${s.moneda === "USD" ? " · USD" : ""}</span>
     <span class="cta-alias">${esc(s.alias)}</span>
@@ -1135,10 +1137,10 @@ async function movimientosCuenta(id, moneda) {
   if (error) return ($("detCuerpo").innerHTML = `<div class="msg error">${esc(error.message)}</div>`);
   const meses = {};
   for (const m of data) (meses[m.fecha.slice(0, 7)] ??= []).push(m);
-  const nombreMes = (m) => new Date(m + "-15T12:00:00Z").toLocaleDateString("es-AR", { month: "long", year: "numeric" });
+  const nombreMes = (m) => { const t = new Date(m + "-15T12:00:00Z").toLocaleDateString("es-AR", { month: "long", year: "numeric" }); return t[0].toUpperCase() + t.slice(1); };
   $("detCuerpo").innerHTML = data.length ? Object.entries(meses).map(([m, xs]) => {
     const neto = xs.reduce((a, x) => a + Number(x.monto), 0);
-    return `<h4 style="margin:1rem 0 .3rem;display:flex;justify-content:space-between"><span style="text-transform:capitalize">${nombreMes(m)}</span>
+    return `<h4 style="margin:1rem 0 .3rem;display:flex;justify-content:space-between"><span>${nombreMes(m)}</span>
       <span class="${neto < 0 ? "menos" : "mas"}" style="font-weight:600">${conMoneda(neto, moneda)}</span></h4>
       <table class="mini"><tbody>${xs.map((x) => `<tr><td style="width:3.2rem">${dm(x.fecha)}</td>
         <td>${esc(x.descripcion_original)}<div class="tenue">${esc(rubroDe(x.rubro_id)?.nombre ?? "Sin clasificar")}${x.origen === "mail" ? " · por mail" : x.origen === "manual" ? " · anotado a mano" : ""}</div></td>
